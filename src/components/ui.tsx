@@ -1,0 +1,235 @@
+import React, { type ReactNode } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import { ArrowRight, Inbox } from 'lucide-react-native';
+import { card, colors, radii, spacing, typography } from '../theme';
+
+interface AppButtonProps {
+  label: string;
+  onPress: () => void;
+  icon?: LucideIcon;
+  variant?: 'primary' | 'secondary' | 'ghost';
+  disabled?: boolean;
+  loading?: boolean;
+  accessibilityHint?: string;
+  style?: StyleProp<ViewStyle>;
+}
+
+export function AppButton({
+  label,
+  onPress,
+  icon: Icon,
+  variant = 'primary',
+  disabled = false,
+  loading = false,
+  accessibilityHint,
+  style,
+}: AppButtonProps) {
+  const blocked = disabled || loading;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled: blocked, busy: loading }}
+      disabled={blocked}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.button,
+        styles[`${variant}Button`],
+        pressed && !blocked && styles.pressed,
+        blocked && styles.disabled,
+        style,
+      ]}
+    >
+      {loading ? (
+        <ActivityIndicator
+          size="small"
+          color={variant === 'primary' ? colors.white : colors.primary}
+        />
+      ) : (
+        Icon && (
+          <Icon
+            size={18}
+            strokeWidth={2}
+            color={variant === 'primary' ? colors.white : colors.primary}
+          />
+        )
+      )}
+      <Text
+        style={[
+          styles.buttonLabel,
+          variant === 'primary' ? styles.primaryLabel : styles.secondaryLabel,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+interface SectionHeadingProps {
+  title: string;
+  subtitle?: string;
+  action?: ReactNode;
+}
+
+export function SectionHeading({ title, subtitle, action }: SectionHeadingProps) {
+  return (
+    <View style={styles.sectionHeading}>
+      <View style={styles.sectionCopy}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+      </View>
+      {action}
+    </View>
+  );
+}
+
+interface EmptyStateProps {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  icon?: LucideIcon;
+}
+
+export function EmptyState({
+  title,
+  description,
+  actionLabel,
+  onAction,
+  icon: Icon = Inbox,
+}: EmptyStateProps) {
+  return (
+    <View style={styles.emptyState} accessibilityRole="summary">
+      <View style={styles.emptyIcon}>
+        <Icon size={28} color={colors.primary} strokeWidth={1.8} />
+      </View>
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyDescription}>{description}</Text>
+      {actionLabel && onAction ? (
+        <AppButton
+          label={actionLabel}
+          onPress={onAction}
+          icon={ArrowRight}
+          variant="secondary"
+          style={styles.emptyAction}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+interface ProgressBarProps {
+  value: number;
+  accessibilityLabel: string;
+}
+
+export function ProgressBar({ value, accessibilityLabel }: ProgressBarProps) {
+  const normalized = Math.min(1, Math.max(0, value));
+  return (
+    <View
+      style={styles.progressTrack}
+      accessibilityRole="progressbar"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(normalized * 100) }}
+    >
+      <View style={[styles.progressFill, { width: `${normalized * 100}%` }]} />
+    </View>
+  );
+}
+
+export function Surface({
+  children,
+  style,
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return <View style={[card, style]}>{children}</View>;
+}
+
+const styles = StyleSheet.create({
+  button: {
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    borderWidth: 0,
+  },
+  primaryButton: {
+    backgroundColor: colors.primary,
+  },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+  },
+  ghostButton: {
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+  },
+  pressed: { opacity: 0.78 },
+  disabled: { opacity: 0.5 },
+  buttonLabel: { ...typography.label, letterSpacing: 0.1 },
+  primaryLabel: { color: colors.white },
+  secondaryLabel: { color: colors.text },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  sectionCopy: { flex: 1 },
+  sectionTitle: { ...typography.heading, color: colors.text },
+  sectionSubtitle: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xxl,
+  },
+  emptyIcon: {
+    width: 40,
+    height: 40,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  emptyTitle: { ...typography.heading, color: colors.text, textAlign: 'center' },
+  emptyDescription: {
+    ...typography.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    maxWidth: 320,
+  },
+  emptyAction: { marginTop: spacing.lg },
+  progressTrack: {
+    height: 8,
+    borderRadius: radii.pill,
+    backgroundColor: colors.border,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: radii.pill,
+    backgroundColor: colors.accent,
+  },
+});
