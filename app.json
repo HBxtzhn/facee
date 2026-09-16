@@ -2,7 +2,7 @@
   "expo": {
     "name": "FaceE",
     "slug": "facee",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "ios": {
@@ -16,7 +16,11 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.facee.app"
+      "package": "com.facee.app",
+      "versionCode": 2,
+      "permissions": [
+        "REQUEST_INSTALL_PACKAGES"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

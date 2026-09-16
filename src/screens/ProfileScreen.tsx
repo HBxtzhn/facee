@@ -9,6 +9,7 @@ import {
 import { useQuestionBankStore } from '../question-bank/store';
 import { useUserStore } from '../store/userStore';
 import { AppButton, ProgressBar, Surface } from '../components/ui';
+import { AppUpdateCard } from '../components/app-update-card';
 import { colors, radii, spacing, typography } from '../theme';
 
 export function ProfileScreen() {
@@ -107,6 +108,9 @@ export function ProfileScreen() {
             />
           </View>
         </Surface>
+
+        <Text style={styles.sectionTitle}>应用更新</Text>
+        <AppUpdateCard />
 
         <Text style={styles.sectionTitle}>数据说明</Text>
         <Surface style={styles.contributionCard}>
