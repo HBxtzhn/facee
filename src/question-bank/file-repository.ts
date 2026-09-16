@@ -53,28 +53,33 @@ export const QUESTION_BANK_CORPUS_PATH = 'index/body.txt';
 const QUESTION_MARKDOWN_FILES = new Set(['question.md', 'answer.md', 'followups.md']);
 
 /** 题库仓库自带的非题库文件：不参与校验，也不影响安装 */
-const IGNORED_REPOSITORY_ROOT_FILES = new Set([
-  'readme.md', 'readme', 'readme.txt', 'license', 'license.md', 'license.txt',
-  'contributing.md', '.gitattributes', '.gitignore', '.gitkeep', '.ds_store', 'thumbs.db',
-]);
-const IGNORED_REPOSITORY_TOP_DIRS = new Set([
-  '.git', '.github', '.vscode', '.idea', 'node_modules', '.husky', '.devcontainer',
-]);
+/** 题库内容只可能出现在这两个位置（规范 v1 §2）：其余一切视为仓库自带内容 */
+const BANK_CATALOG_FILE = 'catalog.json';
+const BANK_CONTENT_DIR = 'questions/';
 
 /**
- * 判断相对路径是否为「仓库元数据」而非题库内容。
- * GitHub 归档 ZIP 里必然有 .gitattributes / README.md / .github/**，任何基于 git 仓库的
- * 题库都会带上它们，因此必须容忍而不是报错。
+ * 判断路径是否属于「题库内容」。
+ *
+ * 关键设计：**只有 catalog.json 与 questions/** 是题库内容，其余一律当作仓库自带内容忽略**。
+ *
+ * 早期实现用的是一张固定的忽略白名单（只认 LICENSE / README.md / .gitattributes /
+ * .github/**），结果被真实仓库打脸：为满足 Apache-2.0 必须随附的
+ * `LICENSE-Apache-2.0`、`NOTICE`、`sources.md` 不在白名单里，导致整包被拒
+ * （真机报错 `Unexpected ZIP entry path: LICENSE-Apache-2.0`）。
+ *
+ * 黑名单永远列不全，白名单式判断才是稳的：题库内容的位置由规范固定，
+ * 其他位置的任何文件都与 App 无关。
+ * 注意：路径安全（穿越/绝对路径/反斜杠/控制字符）、加密、重复条目等检查
+ * 对**所有**条目仍然生效，与这里无关。
  */
 export function isIgnoredRepositoryPath(relativePath: string): boolean {
   const segments = relativePath.split('/').filter((segment) => segment.length > 0);
   if (segments.length === 0) return true;
-  if (segments.some((segment) => segment.toLowerCase() === '.ds_store' || segment === 'Thumbs.db')) {
-    return true;
-  }
-  const first = segments[0].toLowerCase();
-  if (IGNORED_REPOSITORY_TOP_DIRS.has(first)) return true;
-  return segments.length === 1 && IGNORED_REPOSITORY_ROOT_FILES.has(first);
+  // catalog.json 与 questions（含其下全部内容）是题库内容；注意 questions 目录条目本身
+  // 也走严格校验，这样「questions 被做成了文件」这种畸形包仍会被拒。
+  if (segments.length === 1 && segments[0] === BANK_CATALOG_FILE) return false;
+  if (segments[0] === 'questions') return false;
+  return true;
 }
 
 /**
@@ -661,11 +666,8 @@ export function validateQuestionBankZipEntries(
     // 包裹目录自身的条目（如 facee-bank-main/）不是内容，直接跳过。
     if (rootPrefix && normalized === rootPrefix.replace(/\/$/, '')) continue;
 
-    // 题库根之外的内容：仓库元数据容忍，其他一律拒绝。
-    if (rootPrefix && !normalized.startsWith(rootPrefix)) {
-      if (isIgnoredRepositoryPath(normalized)) continue;
-      throw new Error(`Unexpected ZIP entry path outside the question bank: ${entry.path}`);
-    }
+    // 题库根之外：一律视为仓库自带内容（README/LICENSE/NOTICE/CI 等），忽略。
+    if (rootPrefix && !normalized.startsWith(rootPrefix)) continue;
     const relative = rootPrefix ? normalized.slice(rootPrefix.length) : normalized;
     if (!relative) continue;
     if (isIgnoredRepositoryPath(relative)) continue;

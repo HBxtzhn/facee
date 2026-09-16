@@ -210,11 +210,26 @@ describe('GitHub 归档 ZIP 形态兼容', () => {
     expect(paths.some((path) => path.startsWith('facee-bank-main/'))).toBe(false);
   });
 
-  it('题库根之外的非元数据文件仍然拒绝', () => {
-    expect(() => validateQuestionBankZipEntries([
+  it('题库根之外的文件一律忽略（不因仓库自带文件拒装）', () => {
+    // 这是真机踩出来的回归：为满足 Apache-2.0 必须随附的 LICENSE-Apache-2.0 / NOTICE
+    // 曾被固定白名单拒掉，整包安装失败。规则改为「只有 catalog.json 与 questions/** 是题库内容」。
+    const paths = validateQuestionBankZipEntries([
       { path: 'facee-bank-main/catalog.json', isDirectory: false },
+      { path: 'facee-bank-main/LICENSE-Apache-2.0', isDirectory: false },
+      { path: 'facee-bank-main/NOTICE', isDirectory: false },
+      { path: 'facee-bank-main/sources.md', isDirectory: false },
       { path: 'facee-bank-main/secret/payload.sh', isDirectory: false },
-    ], 'facee-bank-main/')).toThrow(/Unexpected ZIP entry path/);
+      { path: 'facee-bank-main/scripts/build.mjs', isDirectory: false },
+    ], 'facee-bank-main/');
+
+    expect(paths).toEqual(['catalog.json']);
+  });
+
+  it('questions/ 内部仍严格：非规范路径照样拒绝', () => {
+    expect(() => validateQuestionBankZipEntries([
+      { path: 'catalog.json', isDirectory: false },
+      { path: 'questions/java-basic-01/notes.txt', isDirectory: false },
+    ])).toThrow(/Unexpected question-bank ZIP path/);
   });
 
   it('路径穿越与加密条目仍然拒绝', () => {
@@ -233,6 +248,44 @@ describe('GitHub 归档 ZIP 形态兼容', () => {
     expect(isIgnoredRepositoryPath('README.md')).toBe(true);
     expect(isIgnoredRepositoryPath('.github/workflows/ci.yml')).toBe(true);
     expect(isIgnoredRepositoryPath('questions/q-01/question.md')).toBe(false);
-    expect(isIgnoredRepositoryPath('notes.md')).toBe(false);
+    expect(isIgnoredRepositoryPath('questions')).toBe(false);
+    expect(isIgnoredRepositoryPath('catalog.json')).toBe(false);
+    // 根目录下的其它文件（note/说明/许可/CI 配置…）一律视为仓库内容
+    expect(isIgnoredRepositoryPath('notes.md')).toBe(true);
+    expect(isIgnoredRepositoryPath('LICENSE-Apache-2.0')).toBe(true);
+    expect(isIgnoredRepositoryPath('sources.md')).toBe(true);
+  });
+});
+
+describe('真实发布包回归（真机 bug 复现）', () => {
+  /**
+   * fixture 是从 https://codeload.github.com/HBxtzhn/facee-bank/zip/refs/heads/main
+   * 真实下载的归档包解析出来的**条目清单**（不解压，只读中央目录）。
+   *
+   * 这个用例直接复现真机报错：
+   *   Unexpected ZIP entry path: LICENSE-Apache-2.0
+   * 成因是早期用固定白名单识别「仓库自带文件」，而 Apache-2.0 要求的
+   * LICENSE-Apache-2.0 / NOTICE / sources.md 不在白名单里，整包被拒。
+   * 现在规则改为：只有 catalog.json 与 questions/** 是题库内容，其余一律忽略。
+   */
+  const entries = JSON.parse(
+    readFileSync(join(__dirname, '__fixtures__', 'published-bank-entries.json'), 'utf8'),
+  ) as { path: string; isDirectory: boolean; isEncrypted: boolean }[];
+
+  it('真实题库归档包能通过条目校验（含 LICENSE-Apache-2.0 / NOTICE / sources.md）', () => {
+    expect(entries.some((e) => e.path.endsWith('LICENSE-Apache-2.0'))).toBe(true);
+    expect(entries.some((e) => e.path.endsWith('NOTICE'))).toBe(true);
+    expect(entries.some((e) => e.path.endsWith('sources.md'))).toBe(true);
+
+    const root = 'facee-bank-main/';
+    let paths: string[] = [];
+    expect(() => {
+      paths = validateQuestionBankZipEntries(entries, root);
+    }).not.toThrow();
+
+    // 只保留题库内容：catalog.json + questions/**
+    expect(paths.every((p) => p === 'catalog.json' || p.startsWith('questions'))).toBe(true);
+    expect(paths).toContain('catalog.json');
+    expect(paths.filter((p) => p.endsWith('/question.md')).length).toBe(300);
   });
 });
