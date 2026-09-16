@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: Android client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --runInBand
+      - name: Web 预览冒烟（UI 调试通道）
+        run: npx expo export --platform web --output-dir web-build
+
+  bank-spec:
+    name: 题库规范工具链
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 生成示例题库并自校验
+        working-directory: packages/bank-spec
+        run: node generate.mjs --profile sample --zip dist/sample-bank.zip
+      - name: 恶意包必须全部被拒
+        working-directory: packages/bank-spec
+        run: node generate.mjs --profile malicious --out dist/fixtures
