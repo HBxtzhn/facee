@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
+  PanResponder,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -10,16 +11,22 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { BookOpen, CheckCircle2, ChevronRight, FileText, Search, X } from 'lucide-react-native';
+import { CheckCircle2, ChevronRight, FileText, Search, X } from 'lucide-react-native';
 import type { Question } from '../question-bank';
 import { questionBankRepository } from '../question-bank';
 import type { HomeStackParamList } from '../navigation/AppNavigator';
-import { EmptyState } from '../components/ui';
-import { colors, difficultyStyles, radii, spacing, typography } from '../theme';
+import { DifficultyBadge, EmptyState } from '../components/ui';
+import { SkeletonBlock } from '../components/skeleton';
+import { cardChrome, colors, difficultyStyles, pressedScale, radii, spacing, typography } from '../theme';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'List'>;
 type ListRoute = RouteProp<HomeStackParamList, 'List'>;
 const DIFFICULTY = difficultyStyles;
+
+/** 与详情页同一套左缘右滑返回参数 */
+const EDGE_BACK_ZONE = 40;
+const GO_BACK_DEBOUNCE_MS = 400;
+const SWIPE_MIN = 56;
 
 export function ListScreen() {
   const route = useRoute<ListRoute>();
@@ -85,8 +92,54 @@ export function ListScreen() {
 
   const hasFilters = Boolean(keyword || difficulty !== undefined);
 
+  // 左缘右滑返回首页：与详情页同一套手势参数（触摸 + 桌面鼠标双路径 + 防抖）
+  const lastBackAtRef = useRef(0);
+  const goBack = useCallback(() => {
+    const now = Date.now();
+    if (now - lastBackAtRef.current < GO_BACK_DEBOUNCE_MS) return;
+    lastBackAtRef.current = now;
+    if (nav.canGoBack()) nav.goBack();
+    else nav.popToTop();
+  }, [nav]);
+
+  const edgeSwipeResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) =>
+      gesture.x0 <= EDGE_BACK_ZONE &&
+      gesture.dx > 24 &&
+      gesture.dx > Math.abs(gesture.dy) * 1.8,
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.x0 > EDGE_BACK_ZONE) return;
+      if (gesture.dx < SWIPE_MIN || gesture.dx <= Math.abs(gesture.dy) * 1.8) return;
+      goBack();
+    },
+  }), [goBack]);
+
+  const mouseDragStart = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onDown = (event: MouseEvent) => {
+      mouseDragStart.current = { x: event.pageX, y: event.pageY };
+    };
+    const onUp = (event: MouseEvent) => {
+      const start = mouseDragStart.current;
+      mouseDragStart.current = null;
+      if (!start || start.x > EDGE_BACK_ZONE) return;
+      const dx = event.pageX - start.x;
+      const dy = event.pageY - start.y;
+      if (dx < SWIPE_MIN || dx <= Math.abs(dy) * 1.8) return;
+      goBack();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [goBack]);
+
   return (
-    <View style={styles.container}>
+    <View style={styles.container} {...edgeSwipeResponder.panHandlers}>
       <View style={styles.toolbar}>
         <View style={styles.searchBox}>
           <Search size={20} color={colors.textMuted} strokeWidth={1.8} />
@@ -122,9 +175,9 @@ export function ListScreen() {
                 accessibilityLabel={`${config.label}难度`}
                 accessibilityState={{ selected }}
                 onPress={() => setDifficulty(selected ? undefined : (level as 1 | 2 | 3))}
-                style={({ pressed }) => [styles.chip, selected && { borderBottomColor: colors.primary, borderBottomWidth: 2 }, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.pressed]}
               >
-                <Text style={[styles.chipText, selected && { color: config.text }]}>{config.label}</Text>
+                <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{config.label}</Text>
               </Pressable>
             );
           })}
@@ -132,9 +185,16 @@ export function ListScreen() {
       </View>
 
       {loading && items.length === 0 ? (
-        <View style={styles.loadingState}>
-          <ActivityIndicator color={colors.primary} />
-          <Text style={styles.loadingText}>正在查找题目</Text>
+        <View style={styles.listContent}>
+          {[0, 1, 2, 3].map((row) => (
+            <SkeletonBlock
+              key={row}
+              width="100%"
+              height={76}
+              radius={radii.md}
+              style={{ marginBottom: spacing.md }}
+            />
+          ))}
         </View>
       ) : (
         <FlatList
@@ -151,12 +211,14 @@ export function ListScreen() {
                     onPress={() => nav.push('Detail', { id: question.id, meta: question })}
                     style={({ pressed }) => [styles.row, pressed && styles.pressed]}
                   >
-                    <View style={styles.rowIcon}><FileText size={21} color={colors.textMuted} strokeWidth={1.8} /></View>
                     <View style={styles.rowBody}>
                       <Text style={styles.rowTitle} numberOfLines={2}>{question.title}</Text>
                       {snippet ? <Text style={styles.snippet} numberOfLines={2}>…{snippet}…</Text> : null}
                       <View style={styles.badges}>
-                        <View style={styles.bodyBadge}><Text style={styles.bodyBadgeText}>正文命中</Text></View>
+                        <View style={styles.bodyBadge}>
+                          <FileText size={13} color={colors.textMuted} strokeWidth={2} />
+                          <Text style={styles.bodyBadgeText}>正文命中</Text>
+                        </View>
                       </View>
                     </View>
                     <ChevronRight size={20} color={colors.textSubtle} strokeWidth={1.8} />
@@ -183,12 +245,16 @@ export function ListScreen() {
                 })}
                 style={({ pressed }) => [styles.row, pressed && styles.pressed]}
               >
-                <View style={styles.rowIcon}><BookOpen size={21} color={colors.primary} strokeWidth={1.8} /></View>
                 <View style={styles.rowBody}>
                   <Text style={styles.rowTitle} numberOfLines={2}>{item.title}</Text>
                   <View style={styles.badges}>
-                    <View style={[styles.badge, { backgroundColor: config.background }]}><Text style={[styles.badgeText, { color: config.text }]}>{config.label}</Text></View>
-                    {item.hasAnswer ? <View style={styles.answerBadge}><CheckCircle2 size={14} color={colors.primary} strokeWidth={2} /><Text style={styles.answerBadgeText}>有答案</Text></View> : null}
+                    <DifficultyBadge difficulty={item.difficulty} />
+                    {item.hasAnswer ? (
+                      <View style={styles.answerBadge}>
+                        <CheckCircle2 size={13} color={colors.textMuted} strokeWidth={2} />
+                        <Text style={styles.answerBadgeText}>有答案</Text>
+                      </View>
+                    ) : null}
                   </View>
                 </View>
                 <ChevronRight size={20} color={colors.textSubtle} strokeWidth={1.8} />
@@ -218,17 +284,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radii.pill,
   },
   input: { ...typography.body, color: colors.text, flex: 1, paddingVertical: spacing.sm, fontSize: 14 },
   clearButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   bodySection: { marginTop: spacing.lg, paddingTop: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border },
   bodySectionTitle: { ...typography.label, color: colors.textMuted, marginBottom: spacing.sm },
   snippet: { ...typography.caption, color: colors.textMuted, marginTop: 4, lineHeight: 18 },
-  bodyBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radii.sm, backgroundColor: colors.surfaceSubtle },
+  bodyBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   bodyBadgeText: { ...typography.caption, color: colors.textMuted, fontWeight: '600' },
   filterHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.md },
   filterLabel: { ...typography.caption, color: colors.textMuted, fontWeight: '600' },
@@ -241,10 +305,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radii.pill,
     backgroundColor: colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: 'transparent',
   },
+  chipSelected: { backgroundColor: colors.primarySoft },
   chipText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
+  chipTextSelected: { color: colors.primary },
   listContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, flexGrow: 1, paddingTop: spacing.xs },
   row: {
     minHeight: 76,
@@ -252,37 +316,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.lg,
+    ...cardChrome,
     borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.sm,
-  },
-  rowIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radii.sm,
-    backgroundColor: colors.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
+    marginBottom: spacing.md,
   },
   rowBody: { flex: 1 },
   rowTitle: { ...typography.bodyStrong, color: colors.text, fontSize: 15, lineHeight: 21 },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: 6 },
-  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radii.sm },
-  badgeText: { ...typography.caption, fontWeight: '700', fontSize: 11 },
   answerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: colors.surfaceSubtle,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radii.sm,
   },
-  answerBadgeText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600', fontSize: 11 },
-  loadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  loadingText: { ...typography.body, color: colors.textMuted },
-  pressed: { opacity: 0.72 },
+  answerBadgeText: { ...typography.caption, color: colors.textMuted, fontWeight: '600', fontSize: 11 },
+  pressed: { ...pressedScale },
 });

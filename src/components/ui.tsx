@@ -10,7 +10,15 @@ import {
 } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { ArrowRight, Inbox } from 'lucide-react-native';
-import { card, colors, radii, spacing, typography } from '../theme';
+import {
+  cardChrome,
+  colors,
+  difficultyStyles,
+  radii,
+  spacing,
+  typography,
+} from '../theme';
+import type { Difficulty } from '../question-bank/types';
 
 interface AppButtonProps {
   label: string;
@@ -94,6 +102,36 @@ export function SectionHeading({ title, subtitle, action }: SectionHeadingProps)
   );
 }
 
+/**
+ * 三个 tab 页共用的页头：徽标 pill + 标题 + 副标题 + 右侧元信息插槽。
+ * 收敛前三屏各写一套样式（纯文本眉题/无描边计数胶囊等），导致风格漂移。
+ */
+export function TabHeader({
+  eyebrow,
+  title,
+  subtitle,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  subtitle?: string;
+  /** 右上角元信息插槽（如「已刷 N 题」「N 题」计数胶囊） */
+  action?: ReactNode;
+}) {
+  return (
+    <View style={styles.tabHeader}>
+      <View style={styles.tabHeaderTop}>
+        <View style={styles.tabHeaderBadge}>
+          <Text style={styles.tabHeaderBadgeText}>{eyebrow}</Text>
+        </View>
+        {action}
+      </View>
+      <Text style={styles.tabHeaderTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.tabHeaderSubtitle}>{subtitle}</Text> : null}
+    </View>
+  );
+}
+
 interface EmptyStateProps {
   title: string;
   description: string;
@@ -155,7 +193,20 @@ export function Surface({
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
-  return <View style={[card, style]}>{children}</View>;
+  return <View style={[styles.surface, style]}>{children}</View>;
+}
+
+/**
+ * 难度标签（唯一实现）：11px/600、软底色、无描边。
+ * List/Favorites/Detail 三处此前各写一份且样式漂移，统一从这里引用。
+ */
+export function DifficultyBadge({ difficulty }: { difficulty: Difficulty }) {
+  const config = difficultyStyles[difficulty];
+  return (
+    <View style={[styles.difficultyBadge, { backgroundColor: config.background }]}>
+      <Text style={[styles.difficultyBadgeText, { color: config.text }]}>{config.label}</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -231,5 +282,55 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: radii.pill,
     backgroundColor: colors.accent,
+  },
+  surface: {
+    ...cardChrome,
+    borderRadius: radii.md,
+  },
+  tabHeader: {
+    marginBottom: spacing.lg,
+  },
+  tabHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  tabHeaderBadge: {
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+  },
+  tabHeaderBadgeText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    fontSize: 11,
+    letterSpacing: 0.4,
+  },
+  tabHeaderTitle: {
+    ...typography.display,
+    color: colors.text,
+    fontSize: 26,
+    lineHeight: 34,
+  },
+  tabHeaderSubtitle: {
+    ...typography.body,
+    color: colors.textMuted,
+    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  difficultyBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  difficultyBadgeText: {
+    ...typography.caption,
+    fontWeight: '600',
+    fontSize: 11,
   },
 });

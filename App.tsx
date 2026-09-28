@@ -1,6 +1,7 @@
 // 应用根：只在本地题库安装后加载导航
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { useFonts } from 'expo-font';
 import { BookOpenCheck } from 'lucide-react-native';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { useQuestionBankStore } from './src/question-bank/store';
@@ -14,13 +15,18 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const questionBankStatus = useQuestionBankStore((state) => state.status);
   const initializeQuestionBank = useQuestionBankStore((state) => state.initialize);
+  // 加载失败时照常进入应用：代码排版回退到系统 monospace，不阻塞启动
+  const [fontsLoaded, fontsError] = useFonts({
+    JetBrainsMono: require('./assets/fonts/JetBrainsMono-Regular.ttf'),
+  });
+  const fontsReady = fontsLoaded || Boolean(fontsError);
 
   useEffect(() => {
     void Promise.all([userLoad(), favoritesLoad(), initializeQuestionBank()])
       .finally(() => setReady(true));
   }, [favoritesLoad, initializeQuestionBank, userLoad]);
 
-  if (!ready || questionBankStatus === 'idle' || questionBankStatus === 'loading') {
+  if (!ready || !fontsReady || questionBankStatus === 'idle' || questionBankStatus === 'loading') {
     return (
       <View style={styles.loadingScreen}>
         <View style={styles.logoMark}>

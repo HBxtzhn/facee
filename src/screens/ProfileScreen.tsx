@@ -10,9 +10,9 @@ import {
 } from 'lucide-react-native';
 import { useQuestionBankStore } from '../question-bank/store';
 import { useUserStore } from '../store/userStore';
-import { AppButton, ProgressBar } from '../components/ui';
+import { AppButton, ProgressBar, TabHeader } from '../components/ui';
 import { AppUpdateCard } from '../components/app-update-card';
-import { colors, radii, spacing, typography } from '../theme';
+import { cardChrome, colors, radii, spacing, typography } from '../theme';
 
 export function ProfileScreen() {
   const user = useUserStore();
@@ -62,8 +62,11 @@ export function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         {/* 顶部个人进度 Hero 卡片 */}
         <View style={styles.header}>
-          <Text style={styles.eyebrow}>学习数据 · 个人中心</Text>
-          <Text style={styles.title}>我的进度</Text>
+          <TabHeader
+            eyebrow="学习数据 · 个人中心"
+            title="我的进度"
+            subtitle="累计刷题与偏好设置，全部保存在本机。"
+          />
         </View>
 
         {/* 学习仪表盘：进度环感与成就数字 */}
@@ -242,19 +245,10 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl },
   header: { paddingTop: spacing.md, paddingBottom: spacing.md },
-  eyebrow: { ...typography.caption, color: colors.textSecondary, fontWeight: '700', letterSpacing: 0.5, fontSize: 11 },
-  title: { ...typography.display, color: colors.text, marginTop: 4, fontSize: 26 },
   statsCard: {
-    backgroundColor: colors.surface,
+    ...cardChrome,
     borderRadius: radii.lg,
     padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
     marginTop: spacing.sm,
     marginBottom: spacing.lg,
   },
@@ -304,10 +298,8 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   cardContainer: {
-    backgroundColor: colors.surface,
+    ...cardChrome,
     borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

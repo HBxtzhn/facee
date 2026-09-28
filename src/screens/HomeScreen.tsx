@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
@@ -13,14 +12,23 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   ArrowRight,
+  Boxes,
   BriefcaseBusiness,
   ChevronRight,
   Code2,
+  Cpu,
   Database,
+  GitBranch,
+  Globe,
+  HardDrive,
   Layers3,
+  Leaf,
+  MessagesSquare,
   Network,
   Play,
+  Server,
   Sparkles,
+  Zap,
   type LucideIcon,
 } from 'lucide-react-native';
 import type { HomeStackParamList } from '../navigation/AppNavigator';
@@ -32,8 +40,9 @@ import {
   type QuestionTag,
 } from '../question-bank';
 import { useUserStore } from '../store/userStore';
-import { EmptyState } from '../components/ui';
-import { colors, radii, spacing, typography } from '../theme';
+import { EmptyState, TabHeader } from '../components/ui';
+import { SkeletonBlock } from '../components/skeleton';
+import { cardChrome, colors, pressedScale, radii, spacing, tints, typography } from '../theme';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Home'>;
 
@@ -56,12 +65,47 @@ type HomeEntry = CategoryItem | DomainItem;
 
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
   java: Code2,
+  'java-basic': Code2,
+  jvm: Cpu,
+  spring: Leaf,
   database: Database,
+  mysql: Database,
+  redis: Boxes,
+  cache: Zap,
+  concurrent: Server,
   middleware: Layers3,
+  mq: MessagesSquare,
+  network: Globe,
+  'cs-basic': Globe,
+  os: HardDrive,
+  distributed: GitBranch,
   architecture: Network,
   ai: Sparkles,
   projects: BriefcaseBusiness,
 };
+
+/** 未知分类的兜底图标：按 id 哈希轮换，避免整列同一个图形 */
+const FALLBACK_ICONS: LucideIcon[] = [Layers3, Code2, Database, Network, Boxes, Cpu];
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+/**
+ * 分类视觉：图标 + 软底色 + 前景色成组返回。
+ * 分类集合由题库数据决定（规范 §5.1），无法写死品牌图标；
+ * 已知领域给专属图形，其余按 id 确定性轮换兜底图标与色板。
+ */
+export function resolveCategoryVisual(id: string): { Icon: LucideIcon; bg: string; fg: string } {
+  const hash = hashString(id);
+  const Icon = CATEGORY_ICONS[id] ?? FALLBACK_ICONS[hash % FALLBACK_ICONS.length];
+  const tint = tints[hash % tints.length];
+  return { Icon, bg: tint.bg, fg: tint.fg };
+}
 
 export function HomeScreen() {
   const nav = useNavigation<Nav>();
@@ -109,11 +153,28 @@ export function HomeScreen() {
     : roots.map((tag) => ({ ...tag, kind: 'tag' as const }));
 
   if (loading) {
+    // 骨架屏：轮廓直接复用真实布局，避免居中转圈的「空白突跳」
     return (
-      <SafeAreaView style={styles.loadingState}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingTitle}>正在读取本地题库</Text>
-        <Text style={styles.loadingCopy}>题目内容保存在你的设备上</Text>
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <View style={styles.skeletonContent}>
+          <View style={styles.skeletonHeaderRow}>
+            <SkeletonBlock width={84} height={26} radius={radii.pill} />
+            <SkeletonBlock width={72} height={24} radius={radii.pill} />
+          </View>
+          <SkeletonBlock width={212} height={30} radius={radii.sm} style={{ marginTop: spacing.md }} />
+          <SkeletonBlock width={256} height={18} radius={radii.xs} style={{ marginTop: spacing.sm }} />
+          <SkeletonBlock width="100%" height={74} radius={radii.lg} style={{ marginTop: spacing.lg }} />
+          <SkeletonBlock width={128} height={16} radius={radii.xs} style={{ marginTop: spacing.xxl }} />
+          {[0, 1, 2, 3, 4].map((row) => (
+            <SkeletonBlock
+              key={row}
+              width="100%"
+              height={70}
+              radius={radii.md}
+              style={{ marginTop: spacing.md }}
+            />
+          ))}
+        </View>
       </SafeAreaView>
     );
   }
@@ -134,26 +195,16 @@ export function HomeScreen() {
         }
         ListHeaderComponent={
           <View style={styles.headerWrapper}>
-            {/* 顶栏品牌与状态轻指示 */}
-            <View style={styles.brandRow}>
-              <View style={styles.brandBadge}>
-                <Sparkles size={13} color={colors.primary} strokeWidth={2.2} />
-                <Text style={styles.brandBadgeText}>FACEE</Text>
-              </View>
-              {totalCount > 0 ? (
-                <View style={styles.historyPill}>
-                  <Text style={styles.historyPillText}>已刷 {totalCount} 题</Text>
+            <TabHeader
+              eyebrow="FACEE"
+              title="今天想练什么？"
+              subtitle="精选题库沉浸练习，随时查看思路并继续追问。"
+              action={totalCount > 0 ? (
+                <View style={styles.headerMetaPill}>
+                  <Text style={styles.headerMetaPillText}>已刷 {totalCount} 题</Text>
                 </View>
               ) : null}
-            </View>
-
-            {/* 更加克制柔和的欢迎标题 */}
-            <View style={styles.heroSection}>
-              <Text style={styles.heroTitle}>今天想练什么？</Text>
-              <Text style={styles.heroCopy}>
-                精选题库沉浸练习，随时查看思路并继续追问。
-              </Text>
-            </View>
+            />
 
             {/* 强化但不过度臃肿的“继续上次”快捷卡片 */}
             {lastViewedId ? (
@@ -191,7 +242,7 @@ export function HomeScreen() {
           </View>
         }
         renderItem={({ item }) => {
-          const Icon = CATEGORY_ICONS[item.id] ?? Layers3;
+          const { Icon, bg, fg } = resolveCategoryVisual(item.id);
           const count = item.questionCount;
           return (
             <Pressable
@@ -204,8 +255,8 @@ export function HomeScreen() {
               }
               style={({ pressed }) => [styles.categoryCard, pressed && styles.pressed]}
             >
-              <View style={styles.categoryIconBox}>
-                <Icon size={20} color={colors.primary} strokeWidth={1.9} />
+              <View style={[styles.categoryIconBox, { backgroundColor: bg }]}>
+                <Icon size={20} color={fg} strokeWidth={1.9} />
               </View>
               <View style={styles.categoryInfo}>
                 <Text style={styles.categoryName}>{item.name}</Text>
@@ -248,29 +299,9 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, flexGrow: 1 },
   headerWrapper: { paddingTop: spacing.md, paddingBottom: spacing.md },
-  brandRow: {
+  headerMetaPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  brandBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.surfaceSubtle,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radii.pill,
-  },
-  brandBadgeText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: '700',
-    fontSize: 11,
-    letterSpacing: 0.4,
-  },
-  historyPill: {
     backgroundColor: colors.surfaceWarm,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -278,42 +309,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  historyPillText: {
+  headerMetaPillText: {
     ...typography.caption,
     color: colors.textMuted,
     fontWeight: '600',
     fontSize: 11,
   },
-  heroSection: {
-    marginBottom: spacing.lg,
-  },
-  heroTitle: {
-    ...typography.display,
-    color: colors.text,
-    fontSize: 26,
-    lineHeight: 34,
-  },
-  heroCopy: {
-    ...typography.body,
-    color: colors.textMuted,
-    marginTop: 4,
-    fontSize: 14,
-    lineHeight: 20,
-  },
   resumeCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    padding: spacing.md,
+    ...cardChrome,
     borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.xl,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+    padding: spacing.lg,
+    marginBottom: spacing.xxl,
   },
   resumeIconWrap: {
     width: 38,
@@ -328,7 +336,7 @@ const styles = StyleSheet.create({
   resumeLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    fontWeight: '700',
+    fontWeight: '600',
     fontSize: 11,
   },
   resumeTitle: {
@@ -340,11 +348,12 @@ const styles = StyleSheet.create({
   resumeAction: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 2,
+    height: 28,
     backgroundColor: colors.surfaceSubtle,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.pill,
   },
   resumeActionText: {
     ...typography.caption,
@@ -371,24 +380,15 @@ const styles = StyleSheet.create({
   categoryCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
+    ...cardChrome,
     borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.sm,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.02,
-    shadowRadius: 2,
-    elevation: 1,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
   categoryIconBox: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: radii.sm,
-    backgroundColor: colors.surfaceSubtle,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.md,
@@ -406,15 +406,17 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
-  pressed: { opacity: 0.72 },
-  loadingState: {
+  pressed: { ...pressedScale },
+  skeletonContent: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.background,
-    padding: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
-  loadingTitle: { ...typography.heading, color: colors.text, marginTop: spacing.lg },
-  loadingCopy: { ...typography.body, color: colors.textMuted, marginTop: spacing.xs },
+  skeletonHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
 });
 

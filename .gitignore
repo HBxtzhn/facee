@@ -32,3 +32,6 @@ Thumbs.db
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+
+# ZCode 会话产物
+.zcode/

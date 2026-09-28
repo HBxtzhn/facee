@@ -85,8 +85,14 @@ function MainTabs() {
           height: 66,
           paddingTop: 7,
           paddingBottom: 8,
-          backgroundColor: colors.background,
-          borderTopColor: colors.border,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.borderSoft,
+          // 内容滚动到底部时与底栏保持分层：极淡的顶部投影
+          shadowColor: colors.text,
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.03,
+          shadowRadius: 8,
+          elevation: 4,
         },
         tabBarIcon: ({ color, focused }) => {
           const Icon =

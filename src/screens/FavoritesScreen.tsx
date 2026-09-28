@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, type CompositeNavigationProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -8,8 +8,9 @@ import { Bookmark, ChevronRight } from 'lucide-react-native';
 import { questionBankRepository, type Question } from '../question-bank';
 import { useFavoritesStore } from '../store/favoritesStore';
 import type { MainTabParamList, RootStackParamList } from '../navigation/AppNavigator';
-import { EmptyState } from '../components/ui';
-import { colors, difficultyStyles, radii, spacing, typography } from '../theme';
+import { DifficultyBadge, EmptyState, TabHeader } from '../components/ui';
+import { SkeletonBlock } from '../components/skeleton';
+import { cardChrome, colors, pressedScale, radii, spacing, typography } from '../theme';
 
 type Nav = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, 'Favorites'>,
@@ -47,23 +48,30 @@ export function FavoritesScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <Text style={styles.eyebrow}>稍后复习 · 收藏夹</Text>
-          {items.length > 0 ? (
-            <View style={styles.countBadge}>
-              <Bookmark size={12} color={colors.primary} strokeWidth={2.5} />
-              <Text style={styles.countBadgeText}>{items.length} 题</Text>
+        <TabHeader
+          eyebrow="稍后复习 · 收藏夹"
+          title="我的收藏"
+          subtitle="集中巩固重点与错题，支持全离线翻阅。"
+          action={items.length > 0 ? (
+            <View style={styles.headerMetaPill}>
+              <Bookmark size={12} color={colors.textSecondary} strokeWidth={2.2} />
+              <Text style={styles.headerMetaPillText}>{items.length} 题</Text>
             </View>
           ) : null}
-        </View>
-        <Text style={styles.title}>我的收藏</Text>
-        <Text style={styles.subtitle}>集中巩固重点与错题，支持全离线翻阅。</Text>
+        />
       </View>
 
       {!loaded ? (
-        <View style={styles.loadingState}>
-          <ActivityIndicator color={colors.primary} />
-          <Text style={styles.loadingText}>正在读取收藏</Text>
+        <View style={styles.skeletonList}>
+          {[0, 1, 2].map((row) => (
+            <SkeletonBlock
+              key={row}
+              width="100%"
+              height={88}
+              radius={radii.md}
+              style={{ marginBottom: spacing.md }}
+            />
+          ))}
         </View>
       ) : (
         <FlatList
@@ -71,7 +79,6 @@ export function FavoritesScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
-            const diff = difficultyStyles[item.difficulty as 1 | 2 | 3] ?? difficultyStyles[1];
             return (
               <Pressable
                 accessibilityRole="button"
@@ -80,15 +87,13 @@ export function FavoritesScreen() {
                 style={({ pressed }) => [styles.rowCard, pressed && styles.cardPressed]}
               >
                 <View style={styles.cardMain}>
-                  <View style={styles.metaRow}>
-                    <View style={[styles.diffTag, { backgroundColor: diff.background }]}>
-                      <Text style={[styles.diffTagText, { color: diff.text }]}>{diff.label}</Text>
-                    </View>
-                    <Text style={styles.tagText}>{item.tags?.[0]?.name ?? '通用'}</Text>
-                  </View>
                   <Text style={styles.cardTitle} numberOfLines={2}>
                     {item.title}
                   </Text>
+                  <View style={styles.metaRow}>
+                    <DifficultyBadge difficulty={item.difficulty as 1 | 2 | 3} />
+                    <Text style={styles.tagText}>{item.tags?.[0]?.name ?? '通用'}</Text>
+                  </View>
                 </View>
                 <ChevronRight size={18} color={colors.textSubtle} strokeWidth={1.8} />
               </Pressable>
@@ -111,49 +116,33 @@ export function FavoritesScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
-  header: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md },
-  headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  eyebrow: { ...typography.caption, color: colors.textSecondary, fontWeight: '700', letterSpacing: 0.5, fontSize: 11 },
-  countBadge: {
+  header: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm },
+  headerMetaPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: colors.surfaceSubtle,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    backgroundColor: colors.surfaceWarm,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  countBadgeText: { ...typography.caption, color: colors.textSecondary, fontWeight: '700', fontSize: 12 },
-  title: { ...typography.display, color: colors.text, marginTop: 4, fontSize: 26 },
-  subtitle: { ...typography.caption, color: colors.textMuted, marginTop: 4, fontSize: 13 },
+  headerMetaPillText: { ...typography.caption, color: colors.textMuted, fontWeight: '600', fontSize: 11 },
+  skeletonList: { paddingHorizontal: spacing.lg, flexGrow: 1 },
   listContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, flexGrow: 1, paddingTop: spacing.sm },
   rowCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    padding: spacing.md,
+    ...cardChrome,
     borderRadius: radii.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
-  cardPressed: { opacity: 0.72, backgroundColor: colors.surfaceSubtle },
+  cardPressed: { ...pressedScale },
   cardMain: { flex: 1, marginRight: spacing.sm },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xs },
-  diffTag: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: radii.xs,
-  },
-  diffTagText: { fontSize: 11, fontWeight: '600' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs },
   tagText: { ...typography.caption, color: colors.textSubtle, fontSize: 11 },
   cardTitle: { ...typography.bodyStrong, color: colors.text, fontSize: 14, lineHeight: 20 },
-  loadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  loadingText: { ...typography.body, color: colors.textMuted },
 });
 

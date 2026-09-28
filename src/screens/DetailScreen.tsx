@@ -6,12 +6,14 @@ import {
   Image,
   Linking,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
   useWindowDimensions,
+  type TextStyle,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -20,12 +22,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Bookmark,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Eye,
-  EyeOff,
   FolderTree,
-  GripVertical,
   HelpCircle,
   Info,
   RotateCcw,
@@ -45,15 +44,18 @@ import {
 import type { HomeStackParamList } from '../navigation/AppNavigator';
 import { useUserStore } from '../store/userStore';
 import { useFavoritesStore } from '../store/favoritesStore';
-import { AppButton, EmptyState } from '../components/ui';
-import { colors, difficultyStyles, radii, spacing, typography } from '../theme';
+import { AppButton, DifficultyBadge, EmptyState } from '../components/ui';
+import { cardChrome, colors, fontFamily, radii, shadows, spacing, typography } from '../theme';
 import { partitionSourceMeta, splitAnswerSections, type AnswerSection } from './detail-content';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Detail'>;
 type DetailRoute = RouteProp<HomeStackParamList, 'Detail'>;
-const DIFFICULTY = difficultyStyles;
-const DOCK_WIDTH = 276;
-const DOCK_HEIGHT = 60;
+const DOCK_WIDTH = 56;
+const DOCK_HEIGHT = 56;
+/** 左缘返回手势的判定区宽度（px）：从这一区域开始的右滑 = 返回上一页 */
+const EDGE_BACK_ZONE = 40;
+/** 防抖：双路径（PanResponder + document mouse）可能对同一次手势各触发一次返回 */
+const GO_BACK_DEBOUNCE_MS = 400;
 const DOCK_OFFSET_KEY = 'facee.practice-dock-offset.v1';
 
 export function DetailScreen() {
@@ -133,7 +135,6 @@ export function DetailScreen() {
     nav.replace('Detail', { id: nextId, queue, queueIndex: nextIndex, mode: 'practice' });
   }
 
-  const difficulty = meta ? DIFFICULTY[meta.difficulty] : null;
   const rawQuestionBody = stripLeadingHeading(question, meta?.title);
   // 提取题干中可能存在的版权来源说明，沉浸阅读时不让来源打扰思考
   const { body: questionBody, sourceMeta } = useMemo(
@@ -148,24 +149,70 @@ export function DetailScreen() {
     const fromFile = parseFollowups(followupsMd ?? '').map((item) => ({ title: item.question, body: item.answer }));
     return [...answerSections.followUps, ...fromFile];
   }, [followupsMd, answerSections.followUps]);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
 
-  const handleTouchStart = useCallback((event: any) => {
-    if (!practiceMode) return;
-    const { pageX, pageY } = event.nativeEvent;
-    touchStart.current = { x: pageX, y: pageY };
-  }, [practiceMode]);
+  // 左右滑屏切题：PanResponder 只认「横向意图」的手势（dx 明显大于 dy），
+  // 不干扰 ScrollView 的纵向滚动；真机触摸与移动端 Web 走这条路径。
+  // 从左缘开始的右滑固定为「返回上一页」（浏览/练习模式都可用），不与「上一题」冲突。
+  const lastGoBackAtRef = useRef(0);
+  const goBack = useCallback(() => {
+    // Web 上一次鼠标拖动会同时走 PanResponder 与 document 监听两条路径，
+    // 400ms 内只认第一次返回，避免连跳两页。
+    const now = Date.now();
+    if (now - lastGoBackAtRef.current < GO_BACK_DEBOUNCE_MS) return;
+    lastGoBackAtRef.current = now;
+    if (nav.canGoBack()) nav.goBack();
+    else nav.popToTop();
+  }, [nav]);
 
-  const handleTouchEnd = useCallback((event: any) => {
-    const start = touchStart.current;
-    touchStart.current = null;
-    if (!practiceMode || !start) return;
-    const { pageX, pageY } = event.nativeEvent;
-    const dx = pageX - start.x;
-    const dy = pageY - start.y;
-    if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.25) return;
-    moveInQueue(dx < 0 ? 1 : -1);
-  }, [practiceMode, queue, queueIndex]);
+  const swipeResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) => {
+      if (!(practiceMode || gesture.x0 <= EDGE_BACK_ZONE)) return false;
+      if (!practiceMode && gesture.dx <= 0) return false;
+      return Math.abs(gesture.dx) > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.8;
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const horizontalOk = Math.abs(gesture.dx) >= 56 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.8;
+      if (!horizontalOk) return;
+      if (gesture.x0 <= EDGE_BACK_ZONE && gesture.dx > 0) {
+        goBack();
+        return;
+      }
+      if (!practiceMode) return;
+      moveInQueue(gesture.dx < 0 ? 1 : -1);
+    },
+  }), [practiceMode, queue, queueIndex, goBack]);
+
+  // 桌面浏览器的鼠标没有触摸语义，PanResponder 收不到可靠拖动；
+  // 用 document 级 mouse 事件补一条平行路径（阈值与触摸一致，仅 Web 安装）。
+  const mouseDragStart = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onDown = (event: MouseEvent) => {
+      mouseDragStart.current = { x: event.pageX, y: event.pageY };
+    };
+    const onUp = (event: MouseEvent) => {
+      const start = mouseDragStart.current;
+      mouseDragStart.current = null;
+      if (!start) return;
+      const dx = event.pageX - start.x;
+      const dy = event.pageY - start.y;
+      const horizontalOk = Math.abs(dx) >= 56 && Math.abs(dx) > Math.abs(dy) * 1.8;
+      if (!horizontalOk) return;
+      if (start.x <= EDGE_BACK_ZONE && dx > 0) {
+        goBack();
+        return;
+      }
+      if (!practiceMode) return;
+      moveInQueue(dx < 0 ? 1 : -1);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [practiceMode, queue, queueIndex, goBack]);
 
   if (loadingQuestion) {
     return (
@@ -190,22 +237,21 @@ export function DetailScreen() {
 
   return (
     <ImageViewerProvider value={openImageViewer}>
-    <View style={styles.screen}>
+    <View
+      style={[styles.screen, practiceMode && Platform.OS === 'web' ? ({ userSelect: 'none' } as any) : null]}
+      {...swipeResponder.panHandlers}
+    >
       <ScrollView
         style={styles.container}
         contentContainerStyle={[styles.content, practiceMode && styles.practiceContent]}
         contentInsetAdjustmentBehavior="automatic"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
       >
         {/* 精致且去臃肿的题目头部 */}
         <View style={styles.header}>
           <View style={styles.topMetaBar}>
             <View style={styles.metaBadges}>
-              {difficulty ? (
-                <View style={[styles.difficultyBadge, { backgroundColor: difficulty.background, borderColor: difficulty.border }]}>
-                  <Text style={[styles.difficultyText, { color: difficulty.text }]}>{difficulty.label}</Text>
-                </View>
+              {meta ? (
+                <DifficultyBadge difficulty={meta.difficulty} />
               ) : null}
               {categoryName ? (
                 <View style={styles.categoryBadge}>
@@ -254,7 +300,7 @@ export function DetailScreen() {
         {/* 题目正文：如果和大标题不一致，才在卡片内展示展开题干，避免视觉疲劳 */}
         {!isQuestionRedundantWithTitle && questionBody.length > 0 ? (
           <View style={styles.questionCard}>
-            <Markdown markdownit={markdownit} style={markdownStyles} rules={{ link: renderLink(nav), image: renderImage }}>
+            <Markdown markdownit={markdownit} style={markdownStyles} rules={{ link: renderLink(nav), image: renderImage, th: renderTableHeader }}>
               {questionBody}
             </Markdown>
           </View>
@@ -311,7 +357,7 @@ export function DetailScreen() {
             </View>
 
             <View style={styles.answerContent}>
-              <Markdown markdownit={markdownit} style={markdownStyles} rules={{ link: renderLink(nav), image: renderImage }}>
+              <Markdown markdownit={markdownit} style={markdownStyles} rules={{ link: renderLink(nav), image: renderImage, th: renderTableHeader }}>
                 {answerSections.main}
               </Markdown>
             </View>
@@ -348,15 +394,11 @@ export function DetailScreen() {
 
       {practiceMode ? (
         <PracticeDock
-          progress={queue && queue.length > 1 && queueIndex >= 0 ? `${queueIndex + 1} / ${queue.length}` : undefined}
+          currentPage={queue && queue.length > 1 && queueIndex >= 0 ? queueIndex + 1 : undefined}
+          totalPages={queue && queue.length > 1 ? queue.length : undefined}
           answerVisible={showAnswer}
           answerAvailable={answer !== null && meta?.hasAnswer === true}
-          previousDisabled={queueIndex <= 0}
-          nextDisabled={!queue || queueIndex < 0 || queueIndex >= queue.length - 1}
-          onPrevious={() => moveInQueue(-1)}
-          onNext={() => moveInQueue(1)}
           onToggleAnswer={() => setShowAnswer((visible) => !visible)}
-          onBack={() => (nav.canGoBack() ? nav.goBack() : nav.popToTop())}
         />
       ) : null}
 
@@ -376,33 +418,33 @@ function FollowUpItem({ section }: { section: AnswerSection }) {
       </Pressable>
       {expanded ? (
         <View style={styles.followUpBody}>
-          <Markdown markdownit={markdownit} style={markdownStyles} rules={{ image: renderImage }}>{section.body}</Markdown>
+          <Markdown markdownit={markdownit} style={markdownStyles} rules={{ image: renderImage, th: renderTableHeader }}>{section.body}</Markdown>
         </View>
       ) : null}
     </View>
   );
 }
 
+/**
+ * 练习模式悬浮进度容器：单一圆形按钮。
+ * - 底部填充层按「当前题 / 总题数」逐渐填满（页面切换时动画过渡）；
+ * - 容器内文字显示「1/4」（无队列时显示「答案」）；
+ * - 点按 = 查看答案 / 收起答案（答案展开时描边高亮）；
+ * - 长按后拖动调整位置（记忆持久化）；
+ * - 左右滑动屏幕切题（触摸手势，挂在 ScrollView 上）。
+ */
 function PracticeDock({
-  progress,
+  currentPage,
+  totalPages,
   answerVisible,
   answerAvailable,
-  previousDisabled,
-  nextDisabled,
-  onPrevious,
-  onNext,
   onToggleAnswer,
-  onBack,
 }: {
-  progress?: string;
+  currentPage?: number;
+  totalPages?: number;
   answerVisible: boolean;
   answerAvailable: boolean;
-  previousDisabled: boolean;
-  nextDisabled: boolean;
-  onPrevious: () => void;
-  onNext: () => void;
   onToggleAnswer: () => void;
-  onBack: () => void;
 }) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -412,6 +454,21 @@ function PracticeDock({
   const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const insetsBottom = insets.bottom;
+  const fillValue = useRef(new Animated.Value(0)).current;
+
+  const fillTarget = currentPage !== undefined && totalPages
+    ? Math.min(1, currentPage / totalPages)
+    : answerVisible
+      ? 1
+      : 0;
+
+  useEffect(() => {
+    Animated.timing(fillValue, {
+      toValue: fillTarget,
+      duration: 320,
+      useNativeDriver: false,
+    }).start();
+  }, [fillTarget, fillValue]);
 
   const bounds = useMemo(() => {
     const baseX = width - 16 - DOCK_WIDTH;
@@ -466,28 +523,28 @@ function PracticeDock({
   }
 
   return (
-    <Animated.View style={[styles.practiceDock, { bottom: insetsBottom + 16 }, dockPosition.getTranslateTransform()]}>
-      {progress ? (
-        <View style={styles.practiceProgressBadge}>
-          <Text style={styles.practiceProgress}>{progress}</Text>
-        </View>
-      ) : null}
-      <View {...panResponder.panHandlers} onTouchStart={beginLongPress} onTouchEnd={endLongPress} onTouchCancel={endLongPress} accessible accessibilityRole="adjustable" accessibilityLabel="操作栏位置" accessibilityHint="长按后拖动，自定义操作栏位置" style={styles.dragHandle}>
-        <GripVertical size={16} color={colors.textSubtle} />
-      </View>
-      <DockButton icon={ChevronLeft} label="返回" onPress={onBack} />
-      <DockButton icon={ChevronLeft} label="上一题" disabled={previousDisabled} onPress={onPrevious} />
-      <DockButton icon={answerVisible ? EyeOff : Eye} label={answerVisible ? '收起答案' : '查看答案'} disabled={!answerAvailable} onPress={onToggleAnswer} emphasized />
-      <DockButton icon={ChevronRight} label="下一题" disabled={nextDisabled} onPress={onNext} />
+    <Animated.View
+      {...panResponder.panHandlers}
+      onTouchStart={beginLongPress}
+      onTouchEnd={endLongPress}
+      onTouchCancel={endLongPress}
+      style={[styles.practiceDock, { bottom: insetsBottom + 16 }, dockPosition.getTranslateTransform()]}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={answerVisible ? '收起答案' : '查看答案'}
+        accessibilityHint={currentPage !== undefined ? `第 ${currentPage} 题，共 ${totalPages ?? '?'} 题；长按后可拖动位置` : '长按后可拖动位置'}
+        accessibilityState={{ disabled: !answerAvailable }}
+        disabled={!answerAvailable}
+        onPress={onToggleAnswer}
+        style={({ pressed }) => [styles.practiceDockInner, answerVisible && styles.dockBorderActive, !answerAvailable && styles.dockButtonDisabled, pressed && styles.pressed]}
+      >
+        <Animated.View style={[styles.dockFillLayer, { height: fillValue.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} pointerEvents="none" />
+        <Text style={[styles.dockProgressText, answerVisible && styles.dockProgressTextActive]}>
+          {currentPage !== undefined && totalPages ? `${currentPage}/${totalPages}` : '答案'}
+        </Text>
+      </Pressable>
     </Animated.View>
-  );
-}
-
-function DockButton({ icon: Icon, label, onPress, disabled, emphasized }: { icon: React.ComponentType<any>; label: string; onPress: () => void; disabled?: boolean; emphasized?: boolean }) {
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: Boolean(disabled) }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.dockButton, emphasized && styles.dockButtonEmphasized, disabled && styles.dockButtonDisabled, pressed && styles.pressed]}>
-      <Icon size={20} color={disabled ? colors.textSubtle : emphasized ? colors.text : colors.textSecondary} strokeWidth={2} />
-    </Pressable>
   );
 }
 
@@ -539,6 +596,11 @@ function renderImage(node: any, _children: any, _parent: any, styles: any) {
   return <MarkdownImage key={node.key} src={src} alt={alt} style={styles.image} />;
 }
 
+function renderTableHeader(node: any, children: any, _parent: any, styles: any) {
+  // th 容器是 View，表头文字的字重只能在 rule 里直接落在 Text 上
+  return <Text key={node.key} style={[styles._VIEW_SAFE_th, markdownStyles.tableHeaderText]}>{children}</Text>;
+}
+
 function renderLink(nav: Nav) {
   return (node: any, _children: any, _style: any, passProps: any) => {
     const href: string = node.attributes?.href ?? '';
@@ -563,17 +625,10 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg, paddingBottom: 64 },
   practiceContent: { paddingBottom: 120 },
   header: {
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
+    ...cardChrome,
     borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+    padding: spacing.lg,
     marginBottom: spacing.lg,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
   },
   topMetaBar: {
     flexDirection: 'row',
@@ -587,13 +642,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     flexWrap: 'wrap',
   },
-  difficultyBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-  },
-  difficultyText: { ...typography.caption, fontWeight: '700' },
   categoryBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -639,11 +687,9 @@ const styles = StyleSheet.create({
   favoriteText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
   favoriteTextActive: { color: colors.text },
   questionCard: {
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
+    ...cardChrome,
     borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+    padding: spacing.lg,
     marginBottom: spacing.md,
   },
   sourceMetaContainer: {
@@ -677,17 +723,11 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
   },
   answerCard: {
-    backgroundColor: colors.surface,
+    ...cardChrome,
+    ...shadows.lifted,
     borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: spacing.lg,
     marginBottom: spacing.lg,
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
   },
   answerHeading: {
     flexDirection: 'row',
@@ -768,43 +808,38 @@ const styles = StyleSheet.create({
   practiceDock: {
     position: 'absolute',
     right: 16,
-    height: DOCK_HEIGHT,
     width: DOCK_WIDTH,
-    flexDirection: 'row',
+    height: DOCK_HEIGHT,
+  },
+  practiceDockInner: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radii.pill,
     alignItems: 'center',
-    paddingHorizontal: 6,
-    gap: 4,
+    justifyContent: 'center',
     backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radii.pill,
-    shadowColor: colors.text,
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    borderColor: colors.borderSoft,
+    overflow: 'hidden',
+    ...shadows.lifted,
   },
-  practiceProgressBadge: {
+  dockBorderActive: { borderColor: colors.primary },
+  /** 底部填充层：高度按队列进度动画增长（JS 驱动，56px 小元素开销可忽略） */
+  dockFillLayer: {
     position: 'absolute',
-    right: 16,
-    bottom: DOCK_HEIGHT + 6,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: radii.pill,
-    shadowColor: colors.text,
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.primarySoft,
   },
-  practiceProgress: { ...typography.caption, color: colors.textSecondary, fontWeight: '600', fontSize: 11 },
-  dragHandle: { width: 36, height: 44, alignItems: 'center', justifyContent: 'center' },
-  dockButton: { width: 44, height: 44, borderRadius: radii.pill, alignItems: 'center', justifyContent: 'center' },
-  dockButtonEmphasized: { backgroundColor: colors.surfaceSubtle },
-  dockButtonDisabled: { opacity: 0.35 },
-  imagePressable: { marginVertical: spacing.sm },
+  dockProgressText: {
+    ...typography.label,
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  dockProgressTextActive: { color: colors.primary },
+  dockButtonDisabled: { opacity: 0.3 },
+  imagePressable: { width: '100%', marginVertical: spacing.sm },
   link: { color: colors.primary, textDecorationLine: 'underline', fontWeight: '500' },
   loadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, padding: spacing.xl },
   loadingTitle: { ...typography.heading, color: colors.text, marginTop: spacing.lg },
@@ -813,11 +848,25 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.75 },
 });
 
+/** 代码块外观：fence 与 code_block 共用一份，避免两处漂移 */
+const codeBlockStyle: TextStyle = {
+  fontFamily: fontFamily.mono,
+  color: colors.text,
+  backgroundColor: colors.surfaceMuted,
+  borderWidth: 1,
+  borderColor: colors.borderSoft,
+  padding: spacing.md,
+  borderRadius: radii.sm,
+  fontSize: 13,
+  lineHeight: 21,
+  marginBottom: spacing.md,
+};
+
 const markdownStyles = {
   body: { ...typography.body, color: colors.text, lineHeight: 26 },
   paragraph: { marginTop: 0, marginBottom: spacing.md },
   heading1: { fontSize: 22, lineHeight: 30, fontWeight: '700', color: colors.text, marginTop: spacing.lg, marginBottom: spacing.md },
-  heading2: { ...typography.title, fontSize: 18, lineHeight: 26, color: colors.text, marginTop: spacing.lg, marginBottom: spacing.sm },
+  heading2: { ...typography.title, fontSize: 18, lineHeight: 26, color: colors.text, marginTop: spacing.xl, marginBottom: spacing.sm },
   heading3: { ...typography.heading, fontSize: 16, lineHeight: 24, color: colors.text, marginTop: spacing.md, marginBottom: spacing.xs },
   bullet_list: { marginBottom: spacing.md },
   ordered_list: { marginBottom: spacing.md },
@@ -831,34 +880,34 @@ const markdownStyles = {
     marginBottom: spacing.md,
   },
   code_inline: {
-    fontFamily: 'monospace',
-    color: colors.text,
+    fontFamily: fontFamily.mono,
+    color: colors.code,
     backgroundColor: colors.surfaceSubtle,
-    borderRadius: radii.xs,
-    paddingHorizontal: 6,
+    borderRadius: 5,
+    paddingHorizontal: 5,
     paddingVertical: 2,
     fontSize: 13,
   },
-  code_block: {
-    fontFamily: 'monospace',
-    color: colors.text,
-    backgroundColor: colors.surfaceSubtle,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    fontSize: 13,
-    lineHeight: 20,
+  code_block: codeBlockStyle,
+  fence: codeBlockStyle,
+  // 表格：去掉库默认的纯黑边框，表头浅底 + 横向 hairline 分隔
+  table: {
+    borderWidth: 0,
+    borderRadius: radii.sm,
+    overflow: 'hidden' as const,
+    alignSelf: 'stretch' as const,
     marginBottom: spacing.md,
   },
-  fence: {
-    fontFamily: 'monospace',
-    color: colors.text,
-    backgroundColor: colors.surfaceSubtle,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: spacing.md,
+  thead: { backgroundColor: colors.surfaceMuted },
+  tbody: {},
+  th: { flex: 1, paddingVertical: 10, paddingHorizontal: spacing.md },
+  tr: {
+    flexDirection: 'row' as const,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
+  td: { flex: 1, paddingVertical: 10, paddingHorizontal: spacing.md },
+  tableHeaderText: { fontWeight: '600' as const, fontSize: 13, color: colors.text },
   image: {
     backgroundColor: colors.surfaceSubtle,
     borderRadius: radii.md,

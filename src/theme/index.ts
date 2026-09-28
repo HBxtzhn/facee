@@ -21,8 +21,9 @@ export const colors = {
   primaryMuted: '#F1F1EB',
   accent: '#2D3748',
 
-  // 边框与分割线：更精细轻盈的线条
+  // 边框与分割线：更精细轻盈的线条（borderSoft 用于卡片描边，配合阴影弱化「框感」）
   border: '#E8E8E2',
+  borderSoft: '#EFEFEA',
   borderStrong: '#D6D6CC',
   borderWarm: '#DEDECF',
 
@@ -37,12 +38,14 @@ export const colors = {
   // 辅助
   white: '#FFFFFF',
   overlay: 'rgba(15, 20, 25, 0.4)',
+  /** 行内代码前景色：在灰底上与正文拉开区分度 */
+  code: '#2B58DB',
 } as const;
 
 export const difficultyStyles = {
-  1: { label: '简单', text: '#2E7D32', background: '#EDF7ED', border: '#C8E6C9' },
-  2: { label: '中等', text: '#B45309', background: '#FEF3C7', border: '#FDE68A' },
-  3: { label: '困难', text: '#B91C1C', background: '#FEE2E2', border: '#FECACA' },
+  1: { label: '简单', text: '#2E7D32', background: '#EDF7ED' },
+  2: { label: '中等', text: '#B45309', background: '#FEF3C7' },
+  3: { label: '困难', text: '#B91C1C', background: '#FEE2E2' },
 } as const;
 
 export const spacing = {
@@ -104,9 +107,68 @@ export const typography = {
   } satisfies TextStyle,
 } as const;
 
-export const card: ViewStyle = {
-  backgroundColor: 'transparent',
+/** 等宽字体（App.tsx 启动时经 expo-font 注册；加载失败时 RN 回退系统字体） */
+export const fontFamily = {
+  mono: 'JetBrainsMono',
+} as const;
+
+/**
+ * 卡片阴影：极淡漫反射投影，让卡片自然「浮」起。
+ * shadow* 系列在 iOS/Web 生效，elevation 在 Android 近似同观感。
+ */
+export const shadows = {
+  card: {
+    shadowColor: '#1C1E21',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  lifted: {
+    shadowColor: '#1C1E21',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+} satisfies Record<string, ViewStyle>;
+
+/** 卡片基础外观：纯白底 + 轻描边 + 漫反射阴影；圆角与内边距由使用处覆盖 */
+export const cardChrome: ViewStyle = {
+  backgroundColor: colors.surface,
+  borderWidth: 1,
+  borderColor: colors.borderSoft,
+  ...shadows.card,
 };
+
+/** 统一按压态：轻微缩放 + 降透明，替代纯 opacity 的生硬反馈 */
+export const pressedScale: ViewStyle = {
+  opacity: 0.85,
+  transform: [{ scale: 0.985 }],
+};
+
+/**
+ * 低饱和软色板：分类图标盒的「底色 + 前景色」成组。
+ * 分类由题库数据决定、无法枚举品牌图标，因此用 id 哈希从这里轮换，
+ * 保证任意题库的分类列表都有稳定的色彩区分。
+ */
+export const tints = [
+  { bg: '#E8F0FE', fg: '#3B6CD4' },
+  { bg: '#E5F4EA', fg: '#2E7D32' },
+  { bg: '#FDEFE0', fg: '#B45309' },
+  { bg: '#EEE9FB', fg: '#6B4FBB' },
+  { bg: '#E0F4F4', fg: '#1F7A78' },
+  { bg: '#FCE9EF', fg: '#B3325F' },
+  { bg: '#E8EAFB', fg: '#4453B8' },
+  { bg: '#F4ECE4', fg: '#8A5A2B' },
+  { bg: '#E9EEF3', fg: '#44607A' },
+  { bg: '#EDF2E0', fg: '#5F7A28' },
+] as const;
+
+/** 与 tints 成组使用的分类图标集（lucide 组件由使用处引用，这里只存 id） */
+export const card = {
+  backgroundColor: 'transparent',
+} as const;
 
 export const navigationTheme = {
   dark: false,

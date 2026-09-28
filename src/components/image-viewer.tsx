@@ -47,18 +47,27 @@ export function FullscreenImageModal({
   const { width, height } = useWindowDimensions();
   const scale = useRef(new Animated.Value(MIN_IMAGE_SCALE)).current;
   const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  /** 下滑关闭：跟手位移与淡出（未缩放时单指向下拖动） */
+  const dismissTranslate = useRef(new Animated.Value(0)).current;
+  const dismissOpacity = useRef(new Animated.Value(1)).current;
   const [scaleLabel, setScaleLabel] = useState(MIN_IMAGE_SCALE);
 
-  const gesture = useMemo(() => ({ scale: MIN_IMAGE_SCALE, distance: 0, x: 0, y: 0 }), []);
+  const gesture = useMemo(
+    () => ({ scale: MIN_IMAGE_SCALE, distance: 0, x: 0, y: 0, dismissing: false }),
+    [],
+  );
 
   const reset = useCallback(() => {
     gesture.scale = MIN_IMAGE_SCALE;
     gesture.x = 0;
     gesture.y = 0;
+    gesture.dismissing = false;
     setScaleLabel(MIN_IMAGE_SCALE);
     scale.setValue(MIN_IMAGE_SCALE);
     translate.setValue({ x: 0, y: 0 });
-  }, [gesture, scale, translate]);
+    dismissTranslate.setValue(0);
+    dismissOpacity.setValue(1);
+  }, [dismissOpacity, dismissTranslate, gesture, scale, translate]);
 
   const responder = useMemo(
     () =>
@@ -86,8 +95,17 @@ export function FullscreenImageModal({
           }
 
           gesture.distance = 0;
-          // 单指：仅在放大后允许拖动，避免与原页滚动打架
-          if (Number(scaleLabel) > MIN_IMAGE_SCALE) {
+          const zoomed = Number(scaleLabel) > MIN_IMAGE_SCALE;
+          // 单指（未缩放）：向下滑动跟手位移，作为「下滑关闭」的视觉反馈
+          if (!zoomed && (state.dy > 6 || gesture.dismissing)) {
+            gesture.dismissing = true;
+            const follow = Math.max(0, state.dy) * 0.55;
+            dismissTranslate.setValue(follow);
+            dismissOpacity.setValue(Math.max(0.35, 1 - follow / 300));
+            return;
+          }
+          // 单指（已放大）：拖动查看，限制在放大后的可见范围内
+          if (zoomed) {
             const maxX = panLimit(width, scaleLabel);
             const maxY = panLimit(height, scaleLabel);
             gesture.x = Math.min(maxX, Math.max(-maxX, state.dx));
@@ -97,12 +115,36 @@ export function FullscreenImageModal({
         },
         onPanResponderRelease: (_event, state) => {
           const moved = Math.hypot(state.dx, state.dy);
-          if (moved < 8 && Number(scaleLabel) <= MIN_IMAGE_SCALE) {
+          const zoomed = Number(scaleLabel) > MIN_IMAGE_SCALE;
+          if (moved < 8 && !zoomed) {
             onClose();
             return;
           }
           gesture.scale = Number(scaleLabel);
           gesture.distance = 0;
+          if (!zoomed) {
+            // 下滑关闭：超过距离阈值，或距离较短但速度足够
+            const shouldClose = state.dy > 130 || (state.dy > 70 && state.vy > 0.9);
+            if (shouldClose) {
+              Animated.timing(dismissOpacity, {
+                toValue: 0,
+                duration: 120,
+                useNativeDriver: true,
+              }).start(({ finished }) => {
+                if (finished) {
+                  reset();
+                  onClose();
+                }
+              });
+              return;
+            }
+            // 未达阈值：弹回原位
+            Animated.parallel([
+              Animated.spring(dismissTranslate, { toValue: 0, useNativeDriver: true }),
+              Animated.spring(dismissOpacity, { toValue: 1, useNativeDriver: true }),
+            ]).start();
+            return;
+          }
           if (gesture.scale <= MIN_IMAGE_SCALE) {
             gesture.x = 0;
             gesture.y = 0;
@@ -110,7 +152,18 @@ export function FullscreenImageModal({
           }
         },
       }),
-    [gesture, height, onClose, scale, scaleLabel, translate, width],
+    [
+      dismissOpacity,
+      dismissTranslate,
+      gesture,
+      height,
+      onClose,
+      reset,
+      scale,
+      scaleLabel,
+      translate,
+      width,
+    ],
   );
 
   if (!preview) return null;
@@ -131,27 +184,31 @@ export function FullscreenImageModal({
         </Pressable>
 
         <View style={styles.canvas} {...responder.panHandlers}>
-          <Animated.Image
-            source={{ uri: preview.src }}
-            resizeMode="contain"
-            accessibilityLabel={preview.alt}
-            style={[
-              styles.fullImage,
-              {
-                transform: [
-                  { translateX: translate.x },
-                  { translateY: translate.y },
-                  { scale },
-                ],
-              },
-            ]}
-          />
+          <Animated.View
+            style={{ transform: [{ translateY: dismissTranslate }], opacity: dismissOpacity }}
+          >
+            <Animated.Image
+              source={{ uri: preview.src }}
+              resizeMode="contain"
+              accessibilityLabel={preview.alt}
+              style={[
+                styles.fullImage,
+                {
+                  transform: [
+                    { translateX: translate.x },
+                    { translateY: translate.y },
+                    { scale },
+                  ],
+                },
+              ]}
+            />
+          </Animated.View>
         </View>
 
         <Text style={styles.hint}>
           {Number(scaleLabel) > MIN_IMAGE_SCALE
             ? `缩放 ${Number(scaleLabel).toFixed(1)}× · 双指调整 / 拖动查看`
-            : '双指缩放 · 点击空白关闭'}
+            : '双指缩放 · 下滑或点击空白关闭'}
         </Text>
       </View>
     </Modal>
