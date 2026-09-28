@@ -1,5 +1,13 @@
 export type AnswerSection = { title: string; body: string };
 
+/** 去掉题面/答案开头的 `# 标题` 行（与题目大标题重复时），避免正文重复渲染标题 */
+export function stripLeadingHeading(markdown: string, expectedTitle?: string): string {
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const match = normalized.match(/^#\s+(.+)\n+/);
+  if (!match || (expectedTitle && match[1].trim() !== expectedTitle.trim())) return normalized;
+  return normalized.slice(match[0].length).trimStart();
+}
+
 // 分离正文中的元信息引用块（例如：来源: JavaGuide...）以防干扰沉浸式做题
 export function partitionSourceMeta(markdown: string): { body: string; sourceMeta: string | null } {
   const normalized = markdown.replace(/\r\n/g, '\n').trim();

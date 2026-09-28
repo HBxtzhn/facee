@@ -1,24 +1,16 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Image,
-  Linking,
-  PanResponder,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
-  type TextStyle,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Markdown from 'react-native-markdown-display';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Bookmark,
   ChevronDown,
@@ -33,27 +25,27 @@ import {
 import type { Question } from '../question-bank';
 import { parseFollowups } from '../question-bank/followups';
 import { questionBankRepository, resolveQuestionAssetMarkdown } from '../question-bank';
-import markdownit, { isExternalHref, parseQuestionHref } from '../lib/markdown';
+import markdownit from '../lib/markdown';
 import { useEdgeSwipeBack } from '../lib/use-edge-swipe-back';
 import { findCategoryName } from '../question-bank/catalog';
 import { useQuestionBankStore } from '../question-bank/store';
 import {
   FullscreenImageModal,
   ImageViewerProvider,
-  useImageViewer,
 } from '../components/image-viewer';
 import type { HomeStackParamList } from '../navigation/AppNavigator';
 import { useUserStore } from '../store/userStore';
 import { useFavoritesStore } from '../store/favoritesStore';
 import { AppButton, DifficultyBadge, EmptyState } from '../components/ui';
-import { cardChrome, colors, fontFamily, radii, shadows, spacing, typography } from '../theme';
-import { partitionSourceMeta, splitAnswerSections, type AnswerSection } from './detail-content';
+import { cardChrome, colors, radii, shadows, spacing, typography } from '../theme';
+import { partitionSourceMeta, splitAnswerSections, stripLeadingHeading } from './detail-content';
+import { FollowUpItem } from './detail/FollowUpItem';
+import { PracticeDock } from './detail/PracticeDock';
+import { markdownStyles, sourceMetaMarkdownStyles } from './detail/markdown-styles';
+import { renderImage, renderLink, renderTableHeader } from './detail/markdown-rules';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Detail'>;
 type DetailRoute = RouteProp<HomeStackParamList, 'Detail'>;
-const DOCK_WIDTH = 56;
-const DOCK_HEIGHT = 56;
-const DOCK_OFFSET_KEY = 'facee.practice-dock-offset.v1';
 
 export function DetailScreen() {
   const route = useRoute<DetailRoute>();
@@ -352,217 +344,6 @@ export function DetailScreen() {
   );
 }
 
-function FollowUpItem({ section }: { section: AnswerSection }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <View style={styles.followUpItem}>
-      <Pressable accessibilityRole="button" accessibilityLabel={section.title} accessibilityState={{ expanded }} onPress={() => setExpanded((value) => !value)} style={({ pressed }) => [styles.followUpToggle, pressed && styles.pressed]}>
-        <Text style={styles.followUpTitle}>{section.title}</Text>
-        <ChevronDown size={18} color={colors.textMuted} style={expanded ? styles.chevronExpanded : undefined} />
-      </Pressable>
-      {expanded ? (
-        <View style={styles.followUpBody}>
-          <Markdown markdownit={markdownit} style={markdownStyles} rules={{ image: renderImage, th: renderTableHeader }}>{section.body}</Markdown>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-/**
- * 练习模式悬浮进度容器：单一圆形按钮。
- * - 底部填充层按「当前题 / 总题数」逐渐填满（页面切换时动画过渡）；
- * - 容器内文字显示「1/4」（无队列时显示「答案」）；
- * - 点按 = 查看答案 / 收起答案（答案展开时描边高亮）；
- * - 长按后拖动调整位置（记忆持久化）；
- * - 左右滑动屏幕切题（触摸手势，挂在 ScrollView 上）。
- */
-function PracticeDock({
-  currentPage,
-  totalPages,
-  answerVisible,
-  answerAvailable,
-  onToggleAnswer,
-}: {
-  currentPage?: number;
-  totalPages?: number;
-  answerVisible: boolean;
-  answerAvailable: boolean;
-  onToggleAnswer: () => void;
-}) {
-  const { width, height } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
-  const dockPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
-  const offsetRef = useRef({ x: 0, y: 0 });
-  const dragEnabledRef = useRef(false);
-  const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  const insetsBottom = insets.bottom;
-  const fillValue = useRef(new Animated.Value(0)).current;
-
-  const fillTarget = currentPage !== undefined && totalPages
-    ? Math.min(1, currentPage / totalPages)
-    : answerVisible
-      ? 1
-      : 0;
-
-  useEffect(() => {
-    Animated.timing(fillValue, {
-      toValue: fillTarget,
-      duration: 320,
-      useNativeDriver: false,
-    }).start();
-  }, [fillTarget, fillValue]);
-
-  const bounds = useMemo(() => {
-    const baseX = width - 16 - DOCK_WIDTH;
-    const baseY = height - insetsBottom - 16 - DOCK_HEIGHT;
-    return { minX: 8 - baseX, maxX: width - DOCK_WIDTH - 8 - baseX, minY: 8 - baseY, maxY: height - DOCK_HEIGHT - 8 - baseY };
-  }, [height, insetsBottom, width]);
-
-  const clamp = useCallback((value: { x: number; y: number }) => ({
-    x: Math.min(bounds.maxX, Math.max(bounds.minX, value.x)),
-    y: Math.min(bounds.maxY, Math.max(bounds.minY, value.y)),
-  }), [bounds]);
-
-  useEffect(() => {
-    let active = true;
-    void AsyncStorage.getItem(DOCK_OFFSET_KEY).then((raw) => {
-      if (!active || !raw) return;
-      try {
-        const saved = clamp(JSON.parse(raw));
-        offsetRef.current = saved;
-        dockPosition.setValue(saved);
-      } catch {
-        // Ignore malformed preferences and use the default bottom position.
-      }
-    });
-    return () => { active = false; };
-  }, [clamp, dockPosition]);
-
-  const panResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => dragEnabledRef.current,
-    onMoveShouldSetPanResponder: () => dragEnabledRef.current,
-    onPanResponderGrant: () => { dragStartRef.current = offsetRef.current; },
-    onPanResponderMove: (_event, gesture) => { dockPosition.setValue(clamp({ x: dragStartRef.current.x + gesture.dx, y: dragStartRef.current.y + gesture.dy })); },
-    onPanResponderRelease: (_event, gesture) => {
-      const next = clamp({ x: dragStartRef.current.x + gesture.dx, y: dragStartRef.current.y + gesture.dy });
-      offsetRef.current = next;
-      dockPosition.setValue(next);
-      void AsyncStorage.setItem(DOCK_OFFSET_KEY, JSON.stringify(next));
-      dragEnabledRef.current = false;
-    },
-    onPanResponderTerminate: () => { dragEnabledRef.current = false; dockPosition.setValue(offsetRef.current); },
-  }), [clamp, dockPosition]);
-
-  function beginLongPress() {
-    dragTimerRef.current = setTimeout(() => { dragEnabledRef.current = true; }, 320);
-  }
-
-  function endLongPress() {
-    if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
-    dragTimerRef.current = null;
-    if (!dragEnabledRef.current) return;
-    dragEnabledRef.current = false;
-  }
-
-  return (
-    <Animated.View
-      {...panResponder.panHandlers}
-      onTouchStart={beginLongPress}
-      onTouchEnd={endLongPress}
-      onTouchCancel={endLongPress}
-      style={[styles.practiceDock, { bottom: insetsBottom + 16 }, dockPosition.getTranslateTransform()]}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={answerVisible ? '收起答案' : '查看答案'}
-        accessibilityHint={currentPage !== undefined ? `第 ${currentPage} 题，共 ${totalPages ?? '?'} 题；长按后可拖动位置` : '长按后可拖动位置'}
-        accessibilityState={{ disabled: !answerAvailable }}
-        disabled={!answerAvailable}
-        onPress={onToggleAnswer}
-        style={({ pressed }) => [styles.practiceDockInner, answerVisible && styles.dockBorderActive, !answerAvailable && styles.dockButtonDisabled, pressed && styles.pressed]}
-      >
-        <Animated.View style={[styles.dockFillLayer, { height: fillValue.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} pointerEvents="none" />
-        <Text style={[styles.dockProgressText, answerVisible && styles.dockProgressTextActive]}>
-          {currentPage !== undefined && totalPages ? `${currentPage}/${totalPages}` : '答案'}
-        </Text>
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-function MarkdownImage({ src, alt, style }: { src: string; alt?: string; style?: any }) {
-  const [ratio, setRatio] = useState<number | null>(null);
-  const openViewer = useImageViewer();
-  const MAX_HEIGHT = 360;
-
-  useEffect(() => {
-    let alive = true;
-    if (!src) return undefined;
-    Image.getSize(
-      src,
-      (width, height) => {
-        if (alive && width > 0 && height > 0) setRatio(width / height);
-      },
-      () => undefined,
-    );
-    return () => {
-      alive = false;
-    };
-  }, [src]);
-
-  const box = ratio
-    ? { width: '100%' as const, aspectRatio: ratio, maxHeight: MAX_HEIGHT }
-    : { width: '100%' as const, height: MAX_HEIGHT };
-
-  return (
-    <Pressable
-      accessibilityRole="imagebutton"
-      accessibilityLabel={alt ? `${alt}，点击全屏查看` : '点击全屏查看图片'}
-      onPress={() => openViewer(src, alt || undefined)}
-      style={styles.imagePressable}
-    >
-      <Image
-        source={{ uri: src }}
-        style={[style, box]}
-        resizeMode="contain"
-        accessible={false}
-      />
-    </Pressable>
-  );
-}
-
-function renderImage(node: any, _children: any, _parent: any, styles: any) {
-  const src: string = node.attributes?.src ?? '';
-  const alt: string = node.attributes?.alt ?? '';
-  if (!src) return null;
-  return <MarkdownImage key={node.key} src={src} alt={alt} style={styles.image} />;
-}
-
-function renderTableHeader(node: any, children: any, _parent: any, styles: any) {
-  // th 容器是 View，表头文字的字重只能在 rule 里直接落在 Text 上
-  return <Text key={node.key} style={[styles._VIEW_SAFE_th, markdownStyles.tableHeaderText]}>{children}</Text>;
-}
-
-function renderLink(nav: Nav) {
-  return (node: any, _children: any, _style: any, passProps: any) => {
-    const href: string = node.attributes?.href ?? '';
-    const label = (node.children ?? []).map((child: any) => child.content ?? '').join('');
-    const questionId = parseQuestionHref(href);
-    if (questionId) return <Text key={node.key} accessibilityRole="link" style={styles.link} onPress={() => nav.push('Detail', { id: questionId })} {...passProps}>{label}</Text>;
-    if (!isExternalHref(href)) return <Text key={node.key} style={styles.link} {...passProps}>{label}</Text>;
-    return <Text key={node.key} accessibilityRole="link" style={styles.link} onPress={() => void Linking.openURL(href)} {...passProps}>{label}</Text>;
-  };
-}
-
-function stripLeadingHeading(markdown: string, expectedTitle?: string): string {
-  const normalized = markdown.replace(/\r\n/g, '\n');
-  const match = normalized.match(/^#\s+(.+)\n+/);
-  if (!match || (expectedTitle && match[1].trim() !== expectedTitle.trim())) return normalized;
-  return normalized.slice(match[0].length).trimStart();
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   container: { flex: 1, backgroundColor: colors.background },
@@ -722,23 +503,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   followUpCountText: { ...typography.caption, color: colors.textMuted, fontWeight: '600' },
-  followUpItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingLeft: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  followUpToggle: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  followUpTitle: { ...typography.bodyStrong, color: colors.text, flex: 1, fontSize: 14 },
-  followUpBody: {
-    paddingBottom: spacing.md,
-  },
   chevronExpanded: { transform: [{ rotate: '180deg' }] },
   queueNavigation: {
     marginTop: spacing.xl,
@@ -749,122 +513,9 @@ const styles = StyleSheet.create({
   queueProgress: { ...typography.caption, color: colors.textMuted, textAlign: 'center', marginBottom: spacing.sm },
   queueButtons: { flexDirection: 'row', gap: spacing.sm },
   queueButton: { flex: 1 },
-  practiceDock: {
-    position: 'absolute',
-    right: 16,
-    width: DOCK_WIDTH,
-    height: DOCK_HEIGHT,
-  },
-  practiceDockInner: {
-    width: '100%',
-    height: '100%',
-    borderRadius: radii.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    overflow: 'hidden',
-    ...shadows.lifted,
-  },
-  dockBorderActive: { borderColor: colors.primary },
-  /** 底部填充层：高度按队列进度动画增长（JS 驱动，56px 小元素开销可忽略） */
-  dockFillLayer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.primarySoft,
-  },
-  dockProgressText: {
-    ...typography.label,
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  dockProgressTextActive: { color: colors.primary },
-  dockButtonDisabled: { opacity: 0.3 },
-  imagePressable: { width: '100%', marginVertical: spacing.sm },
-  link: { color: colors.primary, textDecorationLine: 'underline', fontWeight: '500' },
   loadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, padding: spacing.xl },
   loadingTitle: { ...typography.heading, color: colors.text, marginTop: spacing.lg },
   loadingCopy: { ...typography.body, color: colors.textMuted, marginTop: spacing.xs },
   errorState: { flex: 1, justifyContent: 'center', backgroundColor: colors.background },
   pressed: { opacity: 0.75 },
 });
-
-/** 代码块外观：fence 与 code_block 共用一份，避免两处漂移 */
-const codeBlockStyle: TextStyle = {
-  fontFamily: fontFamily.mono,
-  color: colors.text,
-  backgroundColor: colors.surfaceMuted,
-  borderWidth: 1,
-  borderColor: colors.borderSoft,
-  padding: spacing.md,
-  borderRadius: radii.sm,
-  fontSize: 13,
-  lineHeight: 21,
-  marginBottom: spacing.md,
-};
-
-const markdownStyles = {
-  body: { ...typography.body, color: colors.text, lineHeight: 26 },
-  paragraph: { marginTop: 0, marginBottom: spacing.md },
-  heading1: { fontSize: 22, lineHeight: 30, fontWeight: '700', color: colors.text, marginTop: spacing.lg, marginBottom: spacing.md },
-  heading2: { ...typography.title, fontSize: 18, lineHeight: 26, color: colors.text, marginTop: spacing.xl, marginBottom: spacing.sm },
-  heading3: { ...typography.heading, fontSize: 16, lineHeight: 24, color: colors.text, marginTop: spacing.md, marginBottom: spacing.xs },
-  bullet_list: { marginBottom: spacing.md },
-  ordered_list: { marginBottom: spacing.md },
-  blockquote: {
-    backgroundColor: colors.surfaceSubtle,
-    borderLeftColor: colors.borderStrong,
-    borderLeftWidth: 3,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.sm,
-    marginBottom: spacing.md,
-  },
-  code_inline: {
-    fontFamily: fontFamily.mono,
-    color: colors.code,
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: 5,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    fontSize: 13,
-  },
-  code_block: codeBlockStyle,
-  fence: codeBlockStyle,
-  // 表格：去掉库默认的纯黑边框，表头浅底 + 横向 hairline 分隔
-  table: {
-    borderWidth: 0,
-    borderRadius: radii.sm,
-    overflow: 'hidden' as const,
-    alignSelf: 'stretch' as const,
-    marginBottom: spacing.md,
-  },
-  thead: { backgroundColor: colors.surfaceMuted },
-  tbody: {},
-  th: { flex: 1, paddingVertical: 10, paddingHorizontal: spacing.md },
-  tr: {
-    flexDirection: 'row' as const,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  td: { flex: 1, paddingVertical: 10, paddingHorizontal: spacing.md },
-  tableHeaderText: { fontWeight: '600' as const, fontSize: 13, color: colors.text },
-  image: {
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radii.md,
-  },
-};
-
-const sourceMetaMarkdownStyles = {
-  body: { ...typography.caption, color: colors.textSubtle, lineHeight: 18 },
-  paragraph: { margin: 0 },
-  blockquote: {
-    borderLeftWidth: 0,
-    padding: 0,
-    backgroundColor: 'transparent',
-  },
-};
-
