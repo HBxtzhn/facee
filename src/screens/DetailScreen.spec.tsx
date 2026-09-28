@@ -25,6 +25,10 @@ jest.mock('../question-bank/client', () => ({
   asRemoteQuestionBankRepository: jest.fn(() => null),
 }));
 
+// 可变路由参数：默认浏览模式；练习模式用例改成 { mode: 'practice' } 等。
+// jest.mock 工厂只允许引用 mock* 前缀的变量。
+const mockRouteParams: { id: string; mode?: 'practice'; queue?: string[] } = { id: 'jvm-memory-01' };
+
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => ({
     push: jest.fn(),
@@ -34,7 +38,7 @@ jest.mock('@react-navigation/native', () => ({
     canGoBack: () => true,
     getParent: () => null,
   }),
-  useRoute: () => ({ params: { id: 'jvm-memory-01' } }),
+  useRoute: () => ({ params: mockRouteParams }),
   useFocusEffect: () => undefined,
 }));
 
@@ -46,6 +50,12 @@ jest.mock('react-native-safe-area-context', () => ({
 import { DetailScreen } from './DetailScreen';
 // eslint-disable-next-line import/first
 import { useUserStore } from '../store/userStore';
+// eslint-disable-next-line import/first
+import { useMasteryStore } from '../store/masteryStore';
+// eslint-disable-next-line import/first
+import { useQuestionBankStore } from '../question-bank/store';
+// eslint-disable-next-line import/first
+import type { QuestionBankCatalog } from '../question-bank/types';
 
 type RepoMock = { getQuestion: jest.Mock; getContent: jest.Mock };
 const mockRepository = jest.requireMock('../question-bank/client')
@@ -208,5 +218,101 @@ describe('DetailScreen 答案默认展开设置（设置项 → 屏幕生效）'
 
     await waitFor(() => expect(screen.getByText('参考答案正文。')).toBeTruthy());
     expect(screen.queryByText('查看参考答案')).toBeNull();
+  });
+});
+
+function catalogFor(id: string): QuestionBankCatalog {
+  return { schemaVersion: 1, id, title: '测试题库', tags: [], questions: [] };
+}
+
+describe('DetailScreen 掌握度打标', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useMasteryStore.setState({ marks: {} });
+    useQuestionBankStore.setState({ catalog: null });
+    useUserStore.setState({ answerExpandedByDefault: false });
+    mockRouteParams.id = 'jvm-memory-01';
+    delete mockRouteParams.mode;
+    delete mockRouteParams.queue;
+    mockRepository.getQuestion.mockResolvedValue(meta);
+  });
+
+  it('浏览模式：头部「标记」入口展开三态 chips，打标按题库命名空间写入', async () => {
+    useQuestionBankStore.setState({ catalog: catalogFor('bank-a') });
+    mockRepository.getContent.mockResolvedValue({
+      id: meta.id,
+      questionMd: '# 标题\n\n题干。',
+      answerMd: '参考答案正文。',
+      followupsMd: null,
+      assetBaseUri: undefined,
+    });
+
+    await render(<DetailScreen />);
+    await waitFor(() => expect(screen.getByText('题干。')).toBeTruthy());
+
+    // 未展开时看不到 chips
+    expect(screen.queryByLabelText('标记这道题为不会')).toBeNull();
+
+    fireEvent.press(screen.getByLabelText('标记掌握程度'));
+    fireEvent.press(await screen.findByLabelText('标记这道题为不会'));
+
+    expect(useMasteryStore.getState().getMark('bank-a', 'jvm-memory-01')).toBe('unknown');
+    // 另一个题库的同一题不受影响（命名空间隔离）
+    expect(useMasteryStore.getState().getMark('bank-b', 'jvm-memory-01')).toBeNull();
+  });
+
+  it('无题库时打标入口整体隐藏', async () => {
+    mockRepository.getContent.mockResolvedValue({
+      id: meta.id,
+      questionMd: '# 标题\n\n题干。',
+      answerMd: '参考答案正文。',
+      followupsMd: null,
+      assetBaseUri: undefined,
+    });
+
+    await render(<DetailScreen />);
+    await waitFor(() => expect(screen.getByText('题干。')).toBeTruthy());
+    expect(screen.queryByLabelText('标记掌握程度')).toBeNull();
+  });
+
+  it('练习模式：无答案题（hasAnswer=false）不用揭答案也能打标', async () => {
+    useQuestionBankStore.setState({ catalog: catalogFor('bank-a') });
+    mockRouteParams.mode = 'practice';
+    mockRepository.getQuestion.mockResolvedValue({ ...meta, hasAnswer: false });
+    mockRepository.getContent.mockResolvedValue({
+      id: meta.id,
+      questionMd: '# 标题\n\n题干。',
+      answerMd: null,
+      followupsMd: null,
+      assetBaseUri: undefined,
+    });
+
+    await render(<DetailScreen />);
+
+    await screen.findByLabelText('标记这道题为会了');
+    expect(screen.getByText('这道题掌握了吗？')).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText('标记这道题为会了'));
+    expect(useMasteryStore.getState().getMark('bank-a', 'jvm-memory-01')).toBe('known');
+  });
+
+  it('练习模式：揭答案后出现自评 chips', async () => {
+    useQuestionBankStore.setState({ catalog: catalogFor('bank-a') });
+    mockRouteParams.mode = 'practice';
+    useUserStore.setState({ answerExpandedByDefault: true });
+    mockRepository.getContent.mockResolvedValue({
+      id: meta.id,
+      questionMd: '# 标题\n\n题干。',
+      answerMd: '参考答案正文。',
+      followupsMd: null,
+      assetBaseUri: undefined,
+    });
+
+    await render(<DetailScreen />);
+    await waitFor(() => expect(screen.getByText('参考答案正文。')).toBeTruthy());
+
+    expect(screen.getByText('这道题掌握了吗？')).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('标记这道题为模糊'));
+    expect(useMasteryStore.getState().getMark('bank-a', 'jvm-memory-01')).toBe('fuzzy');
   });
 });

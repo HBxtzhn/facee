@@ -6,12 +6,14 @@ import { BookOpenCheck } from 'lucide-react-native';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { useQuestionBankStore } from './src/question-bank/store';
 import { useFavoritesStore } from './src/store/favoritesStore';
+import { useMasteryStore } from './src/store/masteryStore';
 import { useUserStore } from './src/store/userStore';
 import { colors, spacing, typography } from './src/theme';
 
 export default function App() {
   const userLoad = useUserStore((s) => s.load);
   const favoritesLoad = useFavoritesStore((s) => s.load);
+  const masteryLoad = useMasteryStore((s) => s.load);
   const [ready, setReady] = useState(false);
   const questionBankStatus = useQuestionBankStore((state) => state.status);
   const initializeQuestionBank = useQuestionBankStore((state) => state.initialize);
@@ -22,9 +24,9 @@ export default function App() {
   const fontsReady = fontsLoaded || Boolean(fontsError);
 
   useEffect(() => {
-    void Promise.all([userLoad(), favoritesLoad(), initializeQuestionBank()])
+    void Promise.all([userLoad(), favoritesLoad(), masteryLoad(), initializeQuestionBank()])
       .finally(() => setReady(true));
-  }, [favoritesLoad, initializeQuestionBank, userLoad]);
+  }, [favoritesLoad, initializeQuestionBank, masteryLoad, userLoad]);
 
   if (!ready || !fontsReady || questionBankStatus === 'idle' || questionBankStatus === 'loading') {
     return (

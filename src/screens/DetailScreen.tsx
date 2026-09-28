@@ -37,6 +37,7 @@ import type { HomeStackParamList } from '../navigation/AppNavigator';
 import { useUserStore } from '../store/userStore';
 import { useFavoritesStore } from '../store/favoritesStore';
 import { AppButton, DifficultyBadge, EmptyState } from '../components/ui';
+import { MasteryChips, MasteryHeaderPill } from '../components/mastery-control';
 import { cardChrome, colors, radii, shadows, spacing, typography } from '../theme';
 import { partitionSourceMeta, splitAnswerSections, stripLeadingHeading } from './detail-content';
 import { FollowUpItem } from './detail/FollowUpItem';
@@ -134,6 +135,9 @@ export function DetailScreen() {
   // 所属分类（§7.1）：题库规范 v1 提供 categories 时才有值。
   const catalog = useQuestionBankStore((state) => state.catalog);
   const categoryName = meta ? findCategoryName(catalog, meta.categoryId) : null;
+  // 掌握度打标的命名空间：题库 catalog.id；无题库（Web 预览前的空态）时打标入口隐藏
+  const bankId = catalog?.id ?? null;
+  const answerAvailable = answer !== null && meta?.hasAnswer === true;
   const followUpItems = useMemo(() => {
     const fromFile = parseFollowups(followupsMd ?? '').map((item) => ({ title: item.question, body: item.answer }));
     return [...answerSections.followUps, ...fromFile];
@@ -218,6 +222,9 @@ export function DetailScreen() {
             </Pressable>
           </View>
 
+          {/* 掌握度标记（浏览模式）：头部紧凑入口，展开三态 chips */}
+          {!practiceMode ? <MasteryHeaderPill bankId={bankId} questionId={id} /> : null}
+
           {/* 题目大标题：清晰、沉浸、字体行距舒适 */}
           <Text style={styles.title}>{meta?.title ?? id}</Text>
 
@@ -269,6 +276,13 @@ export function DetailScreen() {
           </View>
         ) : null}
 
+        {/* 练习模式 · 无答案题的打标（口径：无答案题同样可评，闭环不静默失效） */}
+        {practiceMode && bankId && !answerAvailable ? (
+          <View style={styles.masteryStandalone}>
+            <MasteryChips bankId={bankId} questionId={id} showPrompt />
+          </View>
+        ) : null}
+
         {/* 展开参考答案按钮 */}
         {!practiceMode && meta?.hasAnswer && answer !== null && !showAnswer ? (
           <View style={styles.revealButtonContainer}>
@@ -297,6 +311,13 @@ export function DetailScreen() {
                 {answerSections.main}
               </Markdown>
             </View>
+
+            {/* 练习模式 · 揭答案后的自评时刻 */}
+            {practiceMode && bankId ? (
+              <View style={styles.masteryBlock}>
+                <MasteryChips bankId={bankId} questionId={id} showPrompt />
+              </View>
+            ) : null}
 
             {followUpItems.length > 0 ? (
               <View style={styles.followUpSection}>
@@ -333,7 +354,7 @@ export function DetailScreen() {
           currentPage={queue && queue.length > 1 && queueIndex >= 0 ? queueIndex + 1 : undefined}
           totalPages={queue && queue.length > 1 ? queue.length : undefined}
           answerVisible={showAnswer}
-          answerAvailable={answer !== null && meta?.hasAnswer === true}
+          answerAvailable={answerAvailable}
           onToggleAnswer={() => setShowAnswer((visible) => !visible)}
         />
       ) : null}
@@ -474,6 +495,18 @@ const styles = StyleSheet.create({
   answerTitle: { ...typography.heading, color: colors.text },
   answerContent: {
     paddingVertical: spacing.xs,
+  },
+  masteryBlock: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  masteryStandalone: {
+    ...cardChrome,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
   followUpSection: {
     marginTop: spacing.xl,
