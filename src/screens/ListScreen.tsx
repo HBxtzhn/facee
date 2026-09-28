@@ -9,13 +9,14 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { CheckCircle2, ChevronRight, FileText, Search, X } from 'lucide-react-native';
+import { CheckCircle2, ChevronRight, FileText, Search, Shuffle, X } from 'lucide-react-native';
 import type { Question } from '../question-bank';
 import { questionBankRepository } from '../question-bank';
 import type { HomeStackParamList } from '../navigation/AppNavigator';
 import { DifficultyBadge, EmptyState } from '../components/ui';
 import { SkeletonBlock } from '../components/skeleton';
 import { useEdgeSwipeBack } from '../lib/use-edge-swipe-back';
+import { shuffled } from '../lib/shuffle';
 import { cardChrome, colors, difficultyStyles, pressedScale, radii, spacing, typography } from '../theme';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'List'>;
@@ -30,6 +31,8 @@ export function ListScreen() {
   const tagName = route.params.categoryName ?? route.params.tagName ?? '题目';
   const [keyword, setKeyword] = useState('');
   const [difficulty, setDifficulty] = useState<1 | 2 | 3 | undefined>();
+  // 「随机刷」：练习队列按当前筛选结果洗牌（点题时构建，保持筛选语义不变）
+  const [shuffle, setShuffle] = useState(false);
   const [items, setItems] = useState<Question[]>([]);
   // §6.2 正文命中：标题/标签即时匹配之外，再用安装期语料搜正文。
   // 注意：正文命中的题**不在** titleMatches 里，元数据必须单独取，不能拿 items 反查。
@@ -120,23 +123,35 @@ export function ListScreen() {
           <Text style={styles.filterLabel}>难度</Text>
           <Text style={styles.resultCount}>{loading ? '正在查找' : `${items.length} 道题`}</Text>
         </View>
-        <View style={styles.diffRow} accessibilityRole="radiogroup">
-          {[1, 2, 3].map((level) => {
-            const selected = difficulty === level;
-            const config = DIFFICULTY[level as keyof typeof DIFFICULTY];
-            return (
-              <Pressable
-                key={level}
-                accessibilityRole="radio"
-                accessibilityLabel={`${config.label}难度`}
-                accessibilityState={{ selected }}
-                onPress={() => setDifficulty(selected ? undefined : (level as 1 | 2 | 3))}
-                style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.pressed]}
-              >
-                <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{config.label}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={styles.filtersRow}>
+          <View style={styles.diffRow} accessibilityRole="radiogroup">
+            {[1, 2, 3].map((level) => {
+              const selected = difficulty === level;
+              const config = DIFFICULTY[level as keyof typeof DIFFICULTY];
+              return (
+                <Pressable
+                  key={level}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`${config.label}难度`}
+                  accessibilityState={{ selected }}
+                  onPress={() => setDifficulty(selected ? undefined : (level as 1 | 2 | 3))}
+                  style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{config.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="随机刷"
+            accessibilityState={{ selected: shuffle }}
+            onPress={() => setShuffle((value) => !value)}
+            style={({ pressed }) => [styles.chip, shuffle && styles.chipSelected, pressed && styles.pressed]}
+          >
+            <Shuffle size={13} color={shuffle ? colors.primary : colors.textMuted} strokeWidth={2} />
+            <Text style={[styles.chipText, shuffle && styles.chipTextSelected]}>随机刷</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -192,13 +207,18 @@ export function ListScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`${item.title}，${config.label}${item.hasAnswer ? '，有参考答案' : ''}`}
-                onPress={() => nav.push('Detail', {
-                  id: item.id,
-                  meta: item,
-                  queue: items.map((question) => question.id),
-                  queueIndex: items.findIndex((question) => question.id === item.id),
-                  mode: 'practice',
-                })}
+                onPress={() => {
+                  const queue = shuffle
+                    ? shuffled(items.map((question) => question.id))
+                    : items.map((question) => question.id);
+                  nav.push('Detail', {
+                    id: item.id,
+                    meta: item,
+                    queue,
+                    queueIndex: queue.indexOf(item.id),
+                    mode: 'practice',
+                  });
+                }}
                 style={({ pressed }) => [styles.row, pressed && styles.pressed]}
               >
                 <View style={styles.rowBody}>
@@ -253,7 +273,8 @@ const styles = StyleSheet.create({
   filterHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.md },
   filterLabel: { ...typography.caption, color: colors.textMuted, fontWeight: '600' },
   resultCount: { ...typography.caption, color: colors.textSubtle },
-  diffRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  filtersRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.xs },
+  diffRow: { flexDirection: 'row', gap: spacing.sm },
   chip: {
     minHeight: 32,
     paddingHorizontal: spacing.md,

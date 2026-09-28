@@ -34,6 +34,7 @@ import type { HomeStackParamList } from '../navigation/AppNavigator';
 import {
   buildCategorySummaries,
   collectTagSubtreeIds,
+  filterCatalogQuestions,
   questionBankRepository,
   type QuestionBankCatalog,
   type QuestionTag,
@@ -112,6 +113,7 @@ export function HomeScreen() {
   const totalCount = useUserStore((state) => state.totalCount);
   const [roots, setRoots] = useState<TagItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
+  const [catalog, setCatalog] = useState<QuestionBankCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,11 +123,13 @@ export function HomeScreen() {
     else setLoading(true);
     setError(null);
     try {
-      const catalog = await questionBankRepository.getCatalog();
-      if (!catalog) throw new Error('本机还没有安装题库');
-      setCategories(buildCategorySummaries(catalog).map((item) => ({ ...item, kind: 'category' as const })));
-      setRoots(buildRootTags(catalog));
+      const loadedCatalog = await questionBankRepository.getCatalog();
+      if (!loadedCatalog) throw new Error('本机还没有安装题库');
+      setCatalog(loadedCatalog);
+      setCategories(buildCategorySummaries(loadedCatalog).map((item) => ({ ...item, kind: 'category' as const })));
+      setRoots(buildRootTags(loadedCatalog));
     } catch (loadError) {
+      setCatalog(null);
       setRoots([]);
       setCategories([]);
       setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -144,6 +148,26 @@ export function HomeScreen() {
       void load(true);
     }, [load]),
   );
+
+  // 「继续上次练习」：以练习模式回到上次那道题，队列 = 它所在分类的整份题目
+  // （无分类则回退全库），顺序与列表页一致（sort → id）。找不到元数据时退回浏览模式。
+  function resumePractice() {
+    if (!lastViewedId) return;
+    const meta = catalog?.questions.find((question) => question.id === lastViewedId);
+    if (!meta) {
+      nav.push('Detail', { id: lastViewedId });
+      return;
+    }
+    const siblings = filterCatalogQuestions(catalog!, meta.categoryId ? { categoryId: meta.categoryId } : {});
+    const queue = siblings.map((question) => question.id);
+    nav.push('Detail', {
+      id: lastViewedId,
+      meta,
+      queue,
+      queueIndex: queue.indexOf(lastViewedId),
+      mode: 'practice',
+    });
+  }
 
   // 有分类就用分类（§5.1）；旧格式题库没有分类，回退到标签领域，行为不回归。
   const hasCategories = categories.length > 0;
@@ -210,7 +234,8 @@ export function HomeScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`继续上次练习，题目 ${lastViewedId}`}
-                onPress={() => nav.push('Detail', { id: lastViewedId })}
+                accessibilityHint="以练习模式进入，左右滑动切换同类题目"
+                onPress={resumePractice}
                 style={({ pressed }) => [styles.resumeCard, pressed && styles.pressed]}
               >
                 <View style={styles.resumeIconWrap}>
