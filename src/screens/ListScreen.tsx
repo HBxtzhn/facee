@@ -1,8 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   FlatList,
-  PanResponder,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -17,16 +15,12 @@ import { questionBankRepository } from '../question-bank';
 import type { HomeStackParamList } from '../navigation/AppNavigator';
 import { DifficultyBadge, EmptyState } from '../components/ui';
 import { SkeletonBlock } from '../components/skeleton';
+import { useEdgeSwipeBack } from '../lib/use-edge-swipe-back';
 import { cardChrome, colors, difficultyStyles, pressedScale, radii, spacing, typography } from '../theme';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'List'>;
 type ListRoute = RouteProp<HomeStackParamList, 'List'>;
 const DIFFICULTY = difficultyStyles;
-
-/** 与详情页同一套左缘右滑返回参数 */
-const EDGE_BACK_ZONE = 40;
-const GO_BACK_DEBOUNCE_MS = 400;
-const SWIPE_MIN = 56;
 
 export function ListScreen() {
   const route = useRoute<ListRoute>();
@@ -92,54 +86,16 @@ export function ListScreen() {
 
   const hasFilters = Boolean(keyword || difficulty !== undefined);
 
-  // 左缘右滑返回首页：与详情页同一套手势参数（触摸 + 桌面鼠标双路径 + 防抖）
-  const lastBackAtRef = useRef(0);
-  const goBack = useCallback(() => {
-    const now = Date.now();
-    if (now - lastBackAtRef.current < GO_BACK_DEBOUNCE_MS) return;
-    lastBackAtRef.current = now;
-    if (nav.canGoBack()) nav.goBack();
-    else nav.popToTop();
-  }, [nav]);
-
-  const edgeSwipeResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponder: (_event, gesture) =>
-      gesture.x0 <= EDGE_BACK_ZONE &&
-      gesture.dx > 24 &&
-      gesture.dx > Math.abs(gesture.dy) * 1.8,
-    onPanResponderRelease: (_event, gesture) => {
-      if (gesture.x0 > EDGE_BACK_ZONE) return;
-      if (gesture.dx < SWIPE_MIN || gesture.dx <= Math.abs(gesture.dy) * 1.8) return;
-      goBack();
+  // 左缘右滑返回首页（与详情页同一套手势 hook）
+  const swipeHandlers = useEdgeSwipeBack({
+    onEdgeBack: () => {
+      if (nav.canGoBack()) nav.goBack();
+      else nav.popToTop();
     },
-  }), [goBack]);
-
-  const mouseDragStart = useRef<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const onDown = (event: MouseEvent) => {
-      mouseDragStart.current = { x: event.pageX, y: event.pageY };
-    };
-    const onUp = (event: MouseEvent) => {
-      const start = mouseDragStart.current;
-      mouseDragStart.current = null;
-      if (!start || start.x > EDGE_BACK_ZONE) return;
-      const dx = event.pageX - start.x;
-      const dy = event.pageY - start.y;
-      if (dx < SWIPE_MIN || dx <= Math.abs(dy) * 1.8) return;
-      goBack();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, [goBack]);
+  });
 
   return (
-    <View style={styles.container} {...edgeSwipeResponder.panHandlers}>
+    <View style={styles.container} {...swipeHandlers}>
       <View style={styles.toolbar}>
         <View style={styles.searchBox}>
           <Search size={20} color={colors.textMuted} strokeWidth={1.8} />

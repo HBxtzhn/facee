@@ -165,11 +165,6 @@ export const tints = [
   { bg: '#EDF2E0', fg: '#5F7A28' },
 ] as const;
 
-/** 与 tints 成组使用的分类图标集（lucide 组件由使用处引用，这里只存 id） */
-export const card = {
-  backgroundColor: 'transparent',
-} as const;
-
 export const navigationTheme = {
   dark: false,
   colors: {

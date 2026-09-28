@@ -15,7 +15,7 @@ FaceE 换个做法：**题库就是一个 Git 仓库**。
 ## 快速开始
 
 1. 下载安装 [最新版 APK](https://github.com/HBxtzhn/facee/releases/latest)（Android 8.0+，arm64，需允许安装未知来源）
-2. 打开 App →「我的」→「重新下载完整题库」（默认已指向 [facee-bank](https://github.com/HBxtzhn/facee-bank)）
+2. 打开 App →「我的」→「增加题库」，粘贴题库 ZIP 地址（比如 [facee-bank](https://github.com/HBxtzhn/facee-bank) Release 里的下载链接）
 3. 开始刷题，之后可以关掉网络
 
 ## 能做什么
@@ -23,7 +23,8 @@ FaceE 换个做法：**题库就是一个 Git 仓库**。
 - **装题库**：从仓库归档 ZIP 下载 → 校验 → 原子安装，装坏了不会弄丢旧题库
 - **找题**：分类 / 标签（父标签自动含子孙）/ 难度筛选，标题 + 正文全文搜索
 - **看题**：完整 Markdown（表格、代码块、图片可点击放大）、参考答案折叠、面试官追问折叠
-- **刷题**：连续刷题只在你当前的筛选结果里切换，悬浮操作栏可长按拖动
+- **刷题**：连续刷题只在你当前的筛选结果里切换；左右滑屏切题，悬浮进度按钮可点按展开答案、长按拖动
+- **手势**：详情页与列表页都支持左缘右滑返回，看图下滑关闭
 - **记录**：收藏、继续上次、刷题总数
 - **更新**：题库与应用都能在 App 内更新
 
@@ -46,10 +47,10 @@ questions/<id>/assets/          # 图片（可选）
 
 ## 开发
 
-需要 Node 22 与 Android SDK（目前仅支持 Android）：
+需要 Node 22、pnpm 与 Android SDK（目前仅支持 Android）：
 
 ```
-npm ci && npm test          # 17 suites / 114 tests
+pnpm install && pnpm test       # 19 suites / 135 tests
 npx expo run:android
 ```
 

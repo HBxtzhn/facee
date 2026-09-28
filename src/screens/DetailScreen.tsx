@@ -34,6 +34,7 @@ import type { Question } from '../question-bank';
 import { parseFollowups } from '../question-bank/followups';
 import { questionBankRepository, resolveQuestionAssetMarkdown } from '../question-bank';
 import markdownit, { isExternalHref, parseQuestionHref } from '../lib/markdown';
+import { useEdgeSwipeBack } from '../lib/use-edge-swipe-back';
 import { findCategoryName } from '../question-bank/catalog';
 import { useQuestionBankStore } from '../question-bank/store';
 import {
@@ -52,10 +53,6 @@ type Nav = NativeStackNavigationProp<HomeStackParamList, 'Detail'>;
 type DetailRoute = RouteProp<HomeStackParamList, 'Detail'>;
 const DOCK_WIDTH = 56;
 const DOCK_HEIGHT = 56;
-/** 左缘返回手势的判定区宽度（px）：从这一区域开始的右滑 = 返回上一页 */
-const EDGE_BACK_ZONE = 40;
-/** 防抖：双路径（PanResponder + document mouse）可能对同一次手势各触发一次返回 */
-const GO_BACK_DEBOUNCE_MS = 400;
 const DOCK_OFFSET_KEY = 'facee.practice-dock-offset.v1';
 
 export function DetailScreen() {
@@ -150,69 +147,16 @@ export function DetailScreen() {
     return [...answerSections.followUps, ...fromFile];
   }, [followupsMd, answerSections.followUps]);
 
-  // 左右滑屏切题：PanResponder 只认「横向意图」的手势（dx 明显大于 dy），
-  // 不干扰 ScrollView 的纵向滚动；真机触摸与移动端 Web 走这条路径。
-  // 从左缘开始的右滑固定为「返回上一页」（浏览/练习模式都可用），不与「上一题」冲突。
-  const lastGoBackAtRef = useRef(0);
-  const goBack = useCallback(() => {
-    // Web 上一次鼠标拖动会同时走 PanResponder 与 document 监听两条路径，
-    // 400ms 内只认第一次返回，避免连跳两页。
-    const now = Date.now();
-    if (now - lastGoBackAtRef.current < GO_BACK_DEBOUNCE_MS) return;
-    lastGoBackAtRef.current = now;
-    if (nav.canGoBack()) nav.goBack();
-    else nav.popToTop();
-  }, [nav]);
-
-  const swipeResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponder: (_event, gesture) => {
-      if (!(practiceMode || gesture.x0 <= EDGE_BACK_ZONE)) return false;
-      if (!practiceMode && gesture.dx <= 0) return false;
-      return Math.abs(gesture.dx) > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.8;
+  // 手势：中部左右滑切题（仅练习模式）+ 左缘右滑返回（浏览/练习都可用）。
+  // 判定、防抖与桌面鼠标双路径都在 useEdgeSwipeBack 内。
+  const swipeHandlers = useEdgeSwipeBack({
+    onEdgeBack: () => {
+      if (nav.canGoBack()) nav.goBack();
+      else nav.popToTop();
     },
-    onPanResponderRelease: (_event, gesture) => {
-      const horizontalOk = Math.abs(gesture.dx) >= 56 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.8;
-      if (!horizontalOk) return;
-      if (gesture.x0 <= EDGE_BACK_ZONE && gesture.dx > 0) {
-        goBack();
-        return;
-      }
-      if (!practiceMode) return;
-      moveInQueue(gesture.dx < 0 ? 1 : -1);
-    },
-  }), [practiceMode, queue, queueIndex, goBack]);
-
-  // 桌面浏览器的鼠标没有触摸语义，PanResponder 收不到可靠拖动；
-  // 用 document 级 mouse 事件补一条平行路径（阈值与触摸一致，仅 Web 安装）。
-  const mouseDragStart = useRef<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const onDown = (event: MouseEvent) => {
-      mouseDragStart.current = { x: event.pageX, y: event.pageY };
-    };
-    const onUp = (event: MouseEvent) => {
-      const start = mouseDragStart.current;
-      mouseDragStart.current = null;
-      if (!start) return;
-      const dx = event.pageX - start.x;
-      const dy = event.pageY - start.y;
-      const horizontalOk = Math.abs(dx) >= 56 && Math.abs(dx) > Math.abs(dy) * 1.8;
-      if (!horizontalOk) return;
-      if (start.x <= EDGE_BACK_ZONE && dx > 0) {
-        goBack();
-        return;
-      }
-      if (!practiceMode) return;
-      moveInQueue(dx < 0 ? 1 : -1);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, [practiceMode, queue, queueIndex, goBack]);
+    onSwipeLeft: practiceMode ? () => moveInQueue(1) : undefined,
+    onSwipeRight: practiceMode ? () => moveInQueue(-1) : undefined,
+  });
 
   if (loadingQuestion) {
     return (
@@ -239,7 +183,7 @@ export function DetailScreen() {
     <ImageViewerProvider value={openImageViewer}>
     <View
       style={[styles.screen, practiceMode && Platform.OS === 'web' ? ({ userSelect: 'none' } as any) : null]}
-      {...swipeResponder.panHandlers}
+      {...swipeHandlers}
     >
       <ScrollView
         style={styles.container}
