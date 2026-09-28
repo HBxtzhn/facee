@@ -14,10 +14,12 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   ArrowRight,
   BriefcaseBusiness,
+  ChevronRight,
   Code2,
   Database,
   Layers3,
   Network,
+  Play,
   Sparkles,
   type LucideIcon,
 } from 'lucide-react-native';
@@ -30,7 +32,7 @@ import {
   type QuestionTag,
 } from '../question-bank';
 import { useUserStore } from '../store/userStore';
-import { EmptyState, SectionHeading } from '../components/ui';
+import { EmptyState } from '../components/ui';
 import { colors, radii, spacing, typography } from '../theme';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Home'>;
@@ -64,6 +66,7 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
 export function HomeScreen() {
   const nav = useNavigation<Nav>();
   const lastViewedId = useUserStore((state) => state.lastViewedQuestionId);
+  const totalCount = useUserStore((state) => state.totalCount);
   const [roots, setRoots] = useState<TagItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,45 +133,61 @@ export function HomeScreen() {
           />
         }
         ListHeaderComponent={
-          <View>
-            <View style={styles.hero}>
-              <Text style={styles.eyebrow}>FACEE · 离线题库</Text>
+          <View style={styles.headerWrapper}>
+            {/* 顶栏品牌与状态轻指示 */}
+            <View style={styles.brandRow}>
+              <View style={styles.brandBadge}>
+                <Sparkles size={13} color={colors.primary} strokeWidth={2.2} />
+                <Text style={styles.brandBadgeText}>FACEE</Text>
+              </View>
+              {totalCount > 0 ? (
+                <View style={styles.historyPill}>
+                  <Text style={styles.historyPillText}>已刷 {totalCount} 题</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {/* 更加克制柔和的欢迎标题 */}
+            <View style={styles.heroSection}>
               <Text style={styles.heroTitle}>今天想练什么？</Text>
               <Text style={styles.heroCopy}>
-                {hasCategories
-                  ? '按分类进入题库，搜索重点问题，并在答案中继续追问。'
-                  : '按领域进入题库，搜索重点问题，并在答案中继续追问。'}
+                精选题库沉浸练习，随时查看思路并继续追问。
               </Text>
             </View>
 
+            {/* 强化但不过度臃肿的“继续上次”快捷卡片 */}
             {lastViewedId ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`继续上次阅读，题目 ${lastViewedId}`}
+                accessibilityLabel={`继续上次练习，题目 ${lastViewedId}`}
                 onPress={() => nav.push('Detail', { id: lastViewedId })}
                 style={({ pressed }) => [styles.resumeCard, pressed && styles.pressed]}
               >
-                <View style={styles.resumeIcon}>
-                  <ArrowRight size={20} color={colors.primary} strokeWidth={2} />
+                <View style={styles.resumeIconWrap}>
+                  <Play size={16} color={colors.primary} fill={colors.primary} />
                 </View>
                 <View style={styles.resumeCopy}>
-                  <Text style={styles.resumeLabel}>继续上次</Text>
+                  <Text style={styles.resumeLabel}>继续上次练习</Text>
                   <Text style={styles.resumeTitle} numberOfLines={1}>
-                    返回题目 {lastViewedId}
+                    {lastViewedId}
                   </Text>
                 </View>
-                <ArrowRight size={20} color={colors.textMuted} strokeWidth={1.8} />
+                <View style={styles.resumeAction}>
+                  <Text style={styles.resumeActionText}>进入</Text>
+                  <ChevronRight size={16} color={colors.textSecondary} strokeWidth={2} />
+                </View>
               </Pressable>
             ) : null}
 
-            <SectionHeading
-              title={hasCategories ? '选择学习分类' : '选择学习领域'}
-              subtitle={
-                hasCategories
-                  ? `${categories.length} 个分类 · 内容来自本机题库`
-                  : `${roots.length} 个领域 · 内容来自本机题库`
-              }
-            />
+            {/* 分类标题与数量摘要 */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                {hasCategories ? '知识体系分类' : '知识领域'}
+              </Text>
+              <Text style={styles.sectionSubtitle}>
+                {hasCategories ? `共 ${categories.length} 个大类` : `共 ${roots.length} 个领域`}
+              </Text>
+            </View>
           </View>
         }
         renderItem={({ item }) => {
@@ -183,16 +202,16 @@ export function HomeScreen() {
                   ? nav.push('List', { categoryId: item.id, categoryName: item.name })
                   : nav.push('List', { tagId: item.id, tagName: item.name })
               }
-              style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.categoryCard, pressed && styles.pressed]}
             >
-              <View style={styles.cardIcon}>
-                <Icon size={24} color={colors.primary} strokeWidth={1.8} />
+              <View style={styles.categoryIconBox}>
+                <Icon size={20} color={colors.primary} strokeWidth={1.9} />
               </View>
-              <Text style={styles.cardTitle}>{item.name}</Text>
-              <View style={styles.cardMeta}>
-                <Text style={styles.cardCount}>{count} 道题</Text>
-                <ArrowRight size={16} color={colors.textMuted} strokeWidth={1.8} />
+              <View style={styles.categoryInfo}>
+                <Text style={styles.categoryName}>{item.name}</Text>
+                <Text style={styles.categoryCount}>{count} 道核心题</Text>
               </View>
+              <ChevronRight size={18} color={colors.textSubtle} strokeWidth={1.8} />
             </Pressable>
           );
         }}
@@ -228,31 +247,174 @@ export function buildRootTags(catalog: QuestionBankCatalog): TagItem[] {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, flexGrow: 1 },
-  hero: { paddingTop: spacing.lg, paddingBottom: spacing.xl },
-  eyebrow: { ...typography.caption, color: colors.primary, fontWeight: '700', letterSpacing: 0.8 },
-  heroTitle: { ...typography.display, color: colors.text, marginTop: spacing.sm },
-  heroCopy: { ...typography.body, color: colors.textMuted, marginTop: spacing.sm, maxWidth: 520 },
-  resumeCard: {
-    minHeight: 64,
+  headerWrapper: { paddingTop: spacing.md, paddingBottom: spacing.md },
+  brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.xl,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
   },
-  resumeIcon: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  brandBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+  },
+  brandBadgeText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 11,
+    letterSpacing: 0.4,
+  },
+  historyPill: {
+    backgroundColor: colors.surfaceWarm,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  historyPillText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '600',
+    fontSize: 11,
+  },
+  heroSection: {
+    marginBottom: spacing.lg,
+  },
+  heroTitle: {
+    ...typography.display,
+    color: colors.text,
+    fontSize: 26,
+    lineHeight: 34,
+  },
+  heroCopy: {
+    ...typography.body,
+    color: colors.textMuted,
+    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  resumeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.xl,
+    shadowColor: colors.text,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  resumeIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceWarm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.md,
+  },
   resumeCopy: { flex: 1 },
-  resumeLabel: { ...typography.caption, color: colors.accent, fontWeight: '700' },
-  resumeTitle: { ...typography.bodyStrong, color: colors.text },
-  card: { flex: 1, minHeight: 76, flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent', borderBottomWidth: 1, borderBottomColor: colors.border, paddingVertical: spacing.md },
-  cardIcon: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', marginRight: spacing.sm },
-  cardTitle: { ...typography.heading, color: colors.text, flex: 1 },
-  cardMeta: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  cardCount: { ...typography.caption, color: colors.textMuted },
+  resumeLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 11,
+  },
+  resumeTitle: {
+    ...typography.bodyStrong,
+    color: colors.text,
+    marginTop: 2,
+    fontSize: 14,
+  },
+  resumeAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radii.sm,
+  },
+  resumeActionText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    paddingBottom: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  sectionTitle: {
+    ...typography.heading,
+    color: colors.text,
+    fontSize: 16,
+  },
+  sectionSubtitle: {
+    ...typography.caption,
+    color: colors.textSubtle,
+  },
+  categoryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.sm,
+    shadowColor: colors.text,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  categoryIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.md,
+  },
+  categoryInfo: {
+    flex: 1,
+  },
+  categoryName: {
+    ...typography.bodyStrong,
+    color: colors.text,
+    fontSize: 15,
+  },
+  categoryCount: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
   pressed: { opacity: 0.72 },
-  loadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, padding: spacing.xl },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    padding: spacing.xl,
+  },
   loadingTitle: { ...typography.heading, color: colors.text, marginTop: spacing.lg },
   loadingCopy: { ...typography.body, color: colors.textMuted, marginTop: spacing.xs },
 });
+

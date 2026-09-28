@@ -18,6 +18,7 @@ interface QuestionBankState {
   installError: string | null;
   sourceUrl: string;
   setSourceUrl(value: string): void;
+  clearInstallError(): void;
   initialize(): Promise<void>;
   installConfigured(): Promise<boolean>;
 }
@@ -31,6 +32,7 @@ export const useQuestionBankStore = create<QuestionBankState>((set, get) => ({
   installError: null,
   sourceUrl: getConfiguredQuestionBankUrl() ?? '',
   setSourceUrl: (sourceUrl) => set({ sourceUrl }),
+  clearInstallError: () => set({ installError: null }),
 
   initialize: async () => {
     set({ status: 'loading' });

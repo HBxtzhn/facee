@@ -1,37 +1,24 @@
 import { Platform } from 'react-native';
 import { FileSystemQuestionBankRepository } from './file-repository';
 import type {
-  Question,
-  QuestionBankCatalog,
   QuestionBankPackage,
   QuestionBankRepository,
-  QuestionContent,
-  QuestionFilter,
-  QuestionId,
   RemoteQuestionBankRepository,
 } from './types';
 
-/** Web is a visual preview only and deliberately has no installable bank. */
-class WebPreviewQuestionBankRepository implements QuestionBankRepository {
-  async getCatalog(): Promise<QuestionBankCatalog | null> { return null; }
-  async getQuestion(_id: QuestionId): Promise<Question | null> { return null; }
-  async getContent(_id: QuestionId): Promise<QuestionContent | null> { return null; }
-  async listQuestions(_filter?: QuestionFilter): Promise<Question[]> { return []; }
-  async searchBody(_query: string): Promise<{ id: QuestionId; hits: number; snippet: string | null }[]> { return []; }
-  async install(_questionBank: QuestionBankPackage): Promise<never> {
-    throw new Error('Web 仅用于界面预览，请在移动端安装题库');
-  }
-  async clear(): Promise<void> {}
-}
-
 /**
  * Select the durable adapter used by the app. Native builds keep Markdown and
- * extracted assets on disk; web remains an intentionally empty UI preview.
+ * extracted assets on disk; web serves the built-in sample bank for UI preview
+ * (no documentDirectory / zip module in a browser).
  */
 export function createQuestionBankRepository(): QuestionBankRepository {
-  return Platform.OS === 'web'
-    ? new WebPreviewQuestionBankRepository()
-    : new FileSystemQuestionBankRepository();
+  if (Platform.OS === 'web') {
+    // 延迟 require：原生包不会执行预览数据模块（见 file-repository 的 zip 同款模式）
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PreviewQuestionBankRepository } = require('./preview-repository') as typeof import('./preview-repository');
+    return new PreviewQuestionBankRepository();
+  }
+  return new FileSystemQuestionBankRepository();
 }
 
 export const questionBankRepository = createQuestionBankRepository();

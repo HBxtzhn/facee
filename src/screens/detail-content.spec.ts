@@ -1,4 +1,20 @@
-import { splitAnswerSections } from './detail-content';
+import { partitionSourceMeta, splitAnswerSections } from './detail-content';
+
+describe('partitionSourceMeta', () => {
+  it('extracts source meta block at beginning if present', () => {
+    const raw = `> 来源: JavaGuide (Apache-2.0) ，已做规范化。\n\n包装类型的缓存机制了解么？`;
+    const res = partitionSourceMeta(raw);
+    expect(res.sourceMeta).toContain('来源: JavaGuide');
+    expect(res.body).toBe('包装类型的缓存机制了解么？');
+  });
+
+  it('keeps normal blockquote if not source metadata', () => {
+    const raw = `> 注意：这是一个关键提示\n\n正文内容`;
+    const res = partitionSourceMeta(raw);
+    expect(res.sourceMeta).toBeNull();
+    expect(res.body).toBe(raw);
+  });
+});
 
 describe('splitAnswerSections', () => {
   it('keeps the primary answer separate from interviewer follow-ups', () => {

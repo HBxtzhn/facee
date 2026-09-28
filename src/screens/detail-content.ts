@@ -1,5 +1,27 @@
 export type AnswerSection = { title: string; body: string };
 
+// 分离正文中的元信息引用块（例如：来源: JavaGuide...）以防干扰沉浸式做题
+export function partitionSourceMeta(markdown: string): { body: string; sourceMeta: string | null } {
+  const normalized = markdown.replace(/\r\n/g, '\n').trim();
+  const lines = normalized.split('\n');
+
+  // 匹配开头的 > 引用块（如 > 来源：JavaGuide...）
+  if (lines.length > 0 && lines[0].trim().startsWith('>')) {
+    let endIdx = 0;
+    while (endIdx < lines.length && (lines[endIdx].trim().startsWith('>') || lines[endIdx].trim() === '')) {
+      endIdx++;
+    }
+    const metaBlock = lines.slice(0, endIdx).join('\n').trim();
+    // 判断是否包含典型的来源/规范元数据
+    if (/来源|版权|license|Apache|JavaGuide/i.test(metaBlock)) {
+      const restBody = lines.slice(endIdx).join('\n').trim();
+      return { body: restBody, sourceMeta: metaBlock };
+    }
+  }
+
+  return { body: normalized, sourceMeta: null };
+}
+
 /** Separates the answer from the optional interviewer follow-up section. */
 export function splitAnswerSections(markdown: string): { main: string; followUps: AnswerSection[] } {
   const normalized = markdown.replace(/\r\n/g, '\n').trim();
