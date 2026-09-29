@@ -1,10 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   buildExtractionUserPrompt,
+  buildRewriteUserPrompt,
   extractQuestionsFromChunks,
   fetchModelIds,
   LLM_PRESETS,
   parseGeneratedQuestions,
+  parseRewrittenQuestion,
+  rewriteQuestion,
   validateConfig,
   type LlmConfig,
 } from './llm';
@@ -128,6 +131,63 @@ describe('extractQuestionsFromChunks', () => {
     await expect(
       extractQuestionsFromChunks({ baseUrl: 'api.example.com', apiKey: 'k', model: 'm' }, ['资料'], {}),
     ).rejects.toThrow('http');
+  });
+});
+
+describe('parseRewrittenQuestion / rewriteQuestion - AI 改写单题', () => {
+  const GOOD_OBJECT = {
+    title: 'HashMap 在 JDK 8 后做了哪些优化？',
+    question: '请结合源码说明。',
+    answer: '引入红黑树、扩容优化等。',
+    difficulty: 'medium',
+    tags: ['Java'],
+  };
+
+  it('解析裸 JSON 对象', () => {
+    const draft = parseRewrittenQuestion(JSON.stringify(GOOD_OBJECT));
+    expect(draft).toMatchObject({ title: GOOD_OBJECT.title, difficulty: 2, answerMd: GOOD_OBJECT.answer });
+  });
+
+  it('解析代码栏包裹、前后带话的对象', () => {
+    const raw = `好的，这是改写后的版本：\n\`\`\`json\n${JSON.stringify(GOOD_OBJECT)}\n\`\`\`\n希望有帮助。`;
+    expect(parseRewrittenQuestion(raw)?.title).toBe(GOOD_OBJECT.title);
+  });
+
+  it('模型把单题包进数组时也能取到', () => {
+    const draft = parseRewrittenQuestion(JSON.stringify([GOOD_OBJECT]));
+    expect(draft?.title).toBe(GOOD_OBJECT.title);
+  });
+
+  it('缺标题或缺题干返回 null', () => {
+    expect(parseRewrittenQuestion(JSON.stringify({ question: '只有题干' }))).toBeNull();
+    expect(parseRewrittenQuestion('完全不是 JSON')).toBeNull();
+  });
+
+  it('rewriteQuestion 调用 chat 并把原题与用户要求放进提示词', async () => {
+    let capturedBody = '';
+    const fetchImpl = async (_url: string, init?: { body?: string }) => {
+      capturedBody = init?.body ?? '';
+      return jsonResponse(JSON.stringify(GOOD_OBJECT));
+    };
+
+    const draft = await rewriteQuestion(
+      CONFIG,
+      { title: '原题', questionMd: '原题干', answerMd: null, tags: ['Java'] },
+      { instruction: '更难一点', fetchImpl },
+    );
+
+    expect(draft.title).toBe(GOOD_OBJECT.title);
+    const userPrompt = (JSON.parse(capturedBody) as { messages: { content: string }[] }).messages[1].content;
+    expect(userPrompt).toContain('原题干');
+    expect(userPrompt).toContain('更难一点');
+    expect(userPrompt).toContain('【原题开始】');
+  });
+
+  it('模型输出解析失败时抛可读错误', async () => {
+    const fetchImpl = async () => jsonResponse('我也说不清楚');
+    await expect(
+      rewriteQuestion(CONFIG, { title: '原题', questionMd: '干', answerMd: null }, { fetchImpl }),
+    ).rejects.toThrow('无法解析');
   });
 });
 

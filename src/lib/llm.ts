@@ -238,3 +238,78 @@ function normalizeDifficulty(value: unknown): 1 | 2 | 3 {
   if (value === 3 || value === '3' || value === 'hard') return 3;
   return 2; // medium / 2 / 未识别一律归中
 }
+
+/** 待改写的现有题目（题库里的原版） */
+export interface RewriteQuestionInput {
+  title: string;
+  questionMd: string;
+  answerMd: string | null;
+  tags?: string[];
+}
+
+/** 「AI 改写此题」的用户提示词；instruction 是用户的额外要求，可留空 */
+export function buildRewriteUserPrompt(question: RewriteQuestionInput, instruction: string): string {
+  const lines = [
+    '下面是一道现有的面试题。请重写一份更好的版本：题意更清晰、贴近真实面试提问方式，',
+    '答案更完整有条理（分点、给关键概念），但**保持题目主题与考查点不变**，不要换题。',
+  ];
+  if (instruction.trim()) {
+    lines.push(`用户的额外要求（优先满足）：${instruction.trim()}`);
+  }
+  lines.push(
+    '输出一个 JSON 对象，字段固定为：',
+    '{"title": "题目标题", "question": "题干（Markdown）", "answer": "参考答案（Markdown；原题没有答案且无法合理补全时填 null）", "difficulty": "easy|medium|hard 之一", "tags": ["1-4 个短标签"]}',
+    '只输出 JSON 本身，不要解释或代码栏。',
+    '',
+    '【原题开始】',
+    `标题：${question.title}`,
+    `题干：\n${question.questionMd}`,
+    question.answerMd ? `参考答案：\n${question.answerMd}` : '参考答案：（无）',
+    question.tags?.length ? `标签：${question.tags.join('、')}` : '',
+    '【原题结束】',
+  );
+  return lines.filter((line) => line !== undefined).join('\n');
+}
+
+/** 容错解析改写结果：模型可能输出裸对象或包一层数组；解析不出返回 null */
+export function parseRewrittenQuestion(raw: string): GeneratedQuestionDraft | null {
+  const trimmed = raw.trim();
+  const withoutFence = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+  const tryParse = (text: string): unknown => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  };
+
+  let value = tryParse(withoutFence);
+  if (value === undefined) {
+    const objectStart = withoutFence.indexOf('{');
+    const objectEnd = withoutFence.lastIndexOf('}');
+    if (objectStart >= 0 && objectEnd > objectStart) {
+      value = tryParse(withoutFence.slice(objectStart, objectEnd + 1));
+    }
+  }
+  if (value === undefined) {
+    // 兜底：按数组再试一次（模型偶发把单题包进数组）
+    const drafts = parseGeneratedQuestions(withoutFence);
+    return drafts[0] ?? null;
+  }
+  if (Array.isArray(value)) return normalizeDraft(value[0]);
+  return normalizeDraft(value);
+}
+
+/** AI 改写一道现有题目，返回新版本草稿（不直接落库，由 UI 让用户二选一） */
+export async function rewriteQuestion(
+  config: LlmConfig,
+  question: RewriteQuestionInput,
+  options: { instruction?: string; fetchImpl?: FetchLike } = {},
+): Promise<GeneratedQuestionDraft> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const raw = await callChatCompletion(doFetch, config, buildRewriteUserPrompt(question, options.instruction ?? ''));
+  const draft = parseRewrittenQuestion(raw);
+  if (!draft) throw new Error('模型返回的内容无法解析成题目，请重试或换个说法');
+  return draft;
+}
