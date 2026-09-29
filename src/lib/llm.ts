@@ -106,6 +106,43 @@ export function validateConfig(config: LlmConfig): void {
   if (!config.model.trim()) throw new Error('请先在「AI 设置」中填写模型名');
 }
 
+/**
+ * 用 Key 拉取可用模型列表（OpenAI 兼容 GET /models）。
+ * 供「AI 设置」的「获取模型列表」按钮使用；Key 错误 / 地址不对时抛带状态码的错误。
+ */
+export async function fetchModelIds(config: LlmConfig, fetchImpl?: FetchLike): Promise<string[]> {
+  const doFetch = fetchImpl ?? fetch;
+  const baseUrl = config.baseUrl.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//.test(baseUrl)) throw new Error('AI 服务地址必须以 http(s):// 开头');
+  if (!config.apiKey.trim()) throw new Error('请先填写 API Key 再获取模型列表');
+
+  const response = await doFetch(`${baseUrl}/models`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${config.apiKey.trim()}` },
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`获取模型列表失败（HTTP ${response.status}）${body.slice(0, 120)}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error('模型列表响应不是合法 JSON');
+  }
+  const data = (parsed as { data?: unknown }).data;
+  if (!Array.isArray(data)) throw new Error('响应不是 OpenAI /models 结构（缺少 data 数组）');
+  const ids = [
+    ...new Set(
+      data
+        .map((item) => (typeof (item as { id?: unknown })?.id === 'string' ? ((item as { id: string }).id).trim() : ''))
+        .filter((id) => id.length > 0),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
+  if (ids.length === 0) throw new Error('该服务没有返回可用模型');
+  return ids;
+}
+
 async function callChatCompletion(
   doFetch: FetchLike,
   config: LlmConfig,

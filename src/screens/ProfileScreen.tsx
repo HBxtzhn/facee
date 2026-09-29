@@ -84,6 +84,13 @@ export function ProfileScreen() {
     }
   };
 
+  // 点题库行直达：当前是本地题库 → 直接进编辑器；线上题库/无题库 → 管理弹窗
+  const currentBankIsLocal = Boolean(catalog?.id?.startsWith('local-'));
+  const openBankSettings = () => {
+    if (currentBankIsLocal && catalog) setEditorBankId(catalog.id);
+    else setManagerVisible(true);
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -165,12 +172,21 @@ export function ProfileScreen() {
           ) : null}
         </View>
 
-        {/* 本地题库管理：入口只在这里，功能全部弹窗化 */}
+        {/* 本地题库管理：入口只在这里，功能全部弹窗化；点题库行直达 */}
         <Text style={styles.sectionHeader}>本地题库信息</Text>
         <View style={styles.cardContainer}>
           {catalog ? (
             <>
-              <View style={styles.libraryRow}>
+              <Pressable
+                onPress={openBankSettings}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  currentBankIsLocal
+                    ? `编辑当前题库 ${catalog.title}`
+                    : `管理题库 ${catalog.title}`
+                }
+                style={({ pressed }) => [styles.libraryRow, pressed && styles.pressedRow]}
+              >
                 <View style={styles.libraryIconBox}>
                   <Database size={18} color={colors.primary} strokeWidth={2} />
                 </View>
@@ -180,17 +196,11 @@ export function ProfileScreen() {
                     {catalog.questions.length} 道精选真题 · {catalog.tags.length} 个分类标签
                   </Text>
                 </View>
-              </View>
+              </Pressable>
               {isNative ? (
-                <Pressable
-                  onPress={() => setManagerVisible(true)}
-                  style={styles.bankActionRow}
-                  accessibilityRole="button"
-                  accessibilityLabel="管理题库"
-                >
-                  <FolderCog size={14} color={colors.textSecondary} strokeWidth={2} />
-                  <Text style={styles.bankActionText}>管理题库（切换 / 本地题库 / 导入）</Text>
-                </Pressable>
+                <Text style={styles.bankHintRow}>
+                  {currentBankIsLocal ? '点上方题库可直接编辑；点开可切换其它题库' : '点上方题库可切换 / 新建本地题库'}
+                </Text>
               ) : (
                 <Pressable
                   onPress={openUrlDialog}
@@ -206,12 +216,12 @@ export function ProfileScreen() {
           ) : isNative ? (
             <Pressable
               onPress={() => setManagerVisible(true)}
-              style={styles.bankActionRow}
               accessibilityRole="button"
-              accessibilityLabel="管理题库"
+              accessibilityLabel="新建或管理题库"
+              style={({ pressed }) => [styles.bankActionRow, pressed && styles.pressedRow]}
             >
               <FolderCog size={16} color={colors.primary} strokeWidth={2} />
-              <Text style={styles.bankActionTextStrong}>新建 / 管理题库</Text>
+              <Text style={styles.bankActionTextStrong}>新建本地题库 / 添加线上题库</Text>
             </Pressable>
           ) : (
             <Pressable
@@ -327,6 +337,10 @@ export function ProfileScreen() {
               void refreshBanks();
             }}
             onOpenAiSettings={() => setLlmSettingsVisible(true)}
+            onOpenManager={() => {
+              setEditorBankId(null);
+              setManagerVisible(true);
+            }}
           />
           <LlmSettingsModal visible={llmSettingsVisible} onClose={() => setLlmSettingsVisible(false)} />
         </>
@@ -441,6 +455,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginTop: spacing.md,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  bankHintRow: {
+    ...typography.caption,
+    color: colors.textSubtle,
+    fontSize: 11,
+    marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: colors.border,

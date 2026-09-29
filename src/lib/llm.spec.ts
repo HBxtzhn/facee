@@ -2,6 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   buildExtractionUserPrompt,
   extractQuestionsFromChunks,
+  fetchModelIds,
   LLM_PRESETS,
   parseGeneratedQuestions,
   validateConfig,
@@ -151,5 +152,50 @@ describe('validateConfig / presets', () => {
     expect(prompt).toContain('"title"');
     expect(prompt).toContain('【资料开始】');
     expect(prompt).toContain('一段资料');
+  });
+});
+
+describe('fetchModelIds - 按 Key 拉取模型列表', () => {
+  it('请求 /models 并带 Bearer Key，返回排序去重的模型 id', async () => {
+    let capturedUrl = '';
+    let capturedHeaders: Record<string, string> | undefined;
+    const fetchImpl = async (url: string, init?: { headers?: Record<string, string> }) => {
+      capturedUrl = url;
+      capturedHeaders = init?.headers;
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ object: 'list', data: [{ id: 'model-b' }, { id: 'model-a' }, { id: 'model-a' }, {}] }),
+      };
+    };
+
+    const ids = await fetchModelIds(CONFIG, fetchImpl);
+    expect(capturedUrl).toBe('https://api.example.com/v1/models');
+    expect(capturedHeaders?.Authorization).toBe('Bearer sk-test');
+    expect(ids).toEqual(['model-a', 'model-b']);
+  });
+
+  it('HTTP 错误抛出带状态码的信息；坏 Key 场景同理', async () => {
+    const fetchImpl = async () => ({ ok: false, status: 401, text: async () => 'invalid key' });
+    await expect(fetchModelIds(CONFIG, fetchImpl)).rejects.toThrow('HTTP 401');
+  });
+
+  it('缺 Key 或地址非法时直接拒绝，不打网络', async () => {
+    let called = 0;
+    const fetchImpl = async () => {
+      called += 1;
+      return { ok: true, status: 200, text: async () => '{"data":[]}' };
+    };
+    await expect(fetchModelIds({ ...CONFIG, apiKey: ' ' }, fetchImpl)).rejects.toThrow('Key');
+    await expect(fetchModelIds({ ...CONFIG, baseUrl: 'api.example.com' }, fetchImpl)).rejects.toThrow('http');
+    expect(called).toBe(0);
+  });
+
+  it('非 /models 结构或空列表时报错', async () => {
+    const notList = async () => ({ ok: true, status: 200, text: async () => '{"object":"list"}' });
+    await expect(fetchModelIds(CONFIG, notList)).rejects.toThrow('/models');
+    const empty = async () => ({ ok: true, status: 200, text: async () => '{"data":[]}' });
+    await expect(fetchModelIds(CONFIG, empty)).rejects.toThrow('没有返回可用模型');
   });
 });

@@ -1,13 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ListRestart } from 'lucide-react-native';
 import { useLlmConfigStore } from '../../store/llm-config-store';
-import { LLM_PRESETS } from '../../lib/llm';
+import { fetchModelIds, LLM_PRESETS } from '../../lib/llm';
 import { colors, radii, spacing, typography } from '../../theme';
 import { FieldLabel, ModalSheet, SheetActions, SheetError } from './ModalSheet';
 
+/** 模型候选列表最多展示的个数（超出时提示可直接手填） */
+const MAX_MODEL_CHIPS = 24;
+
 /**
  * AI 设置弹窗：配置 OpenAI 兼容的服务地址 / Key / 模型名。
- * 预设一键填充（DeepSeek / 智谱 / Kimi），也可完全自定义；Key 只存本机。
+ * 预设一键填充（DeepSeek / 智谱 / Kimi）；可用 Key 拉取 /models 模型列表点选；
+ * Key 只存本机。
  */
 export function LlmSettingsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const load = useLlmConfigStore((state) => state.load);
@@ -16,6 +21,8 @@ export function LlmSettingsModal({ visible, onClose }: { visible: boolean; onClo
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -32,10 +39,29 @@ export function LlmSettingsModal({ visible, onClose }: { visible: boolean; onClo
 
   function applyPreset(id: string) {
     setPresetId(id);
+    setModelOptions([]);
     const preset = LLM_PRESETS.find((candidate) => candidate.id === id);
     if (preset && preset.baseUrl) {
       setBaseUrl(preset.baseUrl);
       setModel(preset.model);
+    }
+  }
+
+  async function handleFetchModels() {
+    if (fetchingModels) return;
+    setError(null);
+    setFetchingModels(true);
+    try {
+      const ids = await fetchModelIds({ baseUrl, apiKey, model });
+      setModelOptions(ids);
+      if (ids.length > MAX_MODEL_CHIPS) {
+        setError(null);
+      }
+    } catch (fetchError) {
+      setModelOptions([]);
+      setError(fetchError instanceof Error ? fetchError.message : String(fetchError));
+    } finally {
+      setFetchingModels(false);
     }
   }
 
@@ -96,7 +122,10 @@ export function LlmSettingsModal({ visible, onClose }: { visible: boolean; onClo
       <FieldLabel text="服务地址（不含 /chat/completions）" />
       <TextInput
         value={baseUrl}
-        onChangeText={setBaseUrl}
+        onChangeText={(value) => {
+          setBaseUrl(value);
+          setModelOptions([]);
+        }}
         placeholder="https://api.deepseek.com/v1"
         placeholderTextColor={colors.textSubtle}
         autoCapitalize="none"
@@ -108,7 +137,10 @@ export function LlmSettingsModal({ visible, onClose }: { visible: boolean; onClo
       <FieldLabel text="API Key" />
       <TextInput
         value={apiKey}
-        onChangeText={setApiKey}
+        onChangeText={(value) => {
+          setApiKey(value);
+          setModelOptions([]);
+        }}
         placeholder="sk-…"
         placeholderTextColor={colors.textSubtle}
         autoCapitalize="none"
@@ -118,16 +150,63 @@ export function LlmSettingsModal({ visible, onClose }: { visible: boolean; onClo
         accessibilityLabel="AI API Key"
       />
       <FieldLabel text="模型名" />
-      <TextInput
-        value={model}
-        onChangeText={setModel}
-        placeholder="deepseek-chat"
-        placeholderTextColor={colors.textSubtle}
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={styles.input}
-        accessibilityLabel="AI 模型名"
-      />
+      <View style={styles.modelRow}>
+        <TextInput
+          value={model}
+          onChangeText={setModel}
+          placeholder="deepseek-chat"
+          placeholderTextColor={colors.textSubtle}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, styles.modelInput]}
+          accessibilityLabel="AI 模型名"
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="获取模型列表"
+          accessibilityHint="用当前 Key 拉取该服务可用的模型"
+          disabled={fetchingModels || !baseUrl.trim() || !apiKey.trim()}
+          onPress={() => void handleFetchModels()}
+          style={({ pressed }) => [
+            styles.fetchModelsButton,
+            (!baseUrl.trim() || !apiKey.trim()) && styles.fetchModelsButtonDisabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <ListRestart size={14} color={colors.primary} strokeWidth={2} />
+          <Text style={styles.fetchModelsText}>{fetchingModels ? '获取中' : '拉列表'}</Text>
+        </Pressable>
+      </View>
+      {modelOptions.length > 0 ? (
+        <View style={styles.modelOptionsBox}>
+          <Text style={styles.modelOptionsHint}>
+            可用模型 {modelOptions.length} 个{modelOptions.length > MAX_MODEL_CHIPS ? '，仅展示前 24 个，也可直接手填' : '，点选即用'}
+          </Text>
+          <View style={styles.presetRow}>
+            {modelOptions.slice(0, MAX_MODEL_CHIPS).map((id) => {
+              const selected = model.trim() === id;
+              return (
+                <Pressable
+                  key={id}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`模型 ${id}`}
+                  accessibilityState={{ selected }}
+                  onPress={() => setModel(id)}
+                  style={({ pressed }) => [
+                    styles.presetChip,
+                    selected && styles.presetChipSelected,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.presetText, selected && styles.presetTextSelected]} numberOfLines={1}>
+                    {id}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
     </ModalSheet>
   );
 }
@@ -150,6 +229,28 @@ const styles = StyleSheet.create({
   },
   presetText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
   presetTextSelected: { color: colors.primary, fontWeight: '700' },
+  modelRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
+  modelInput: { flex: 1 },
+  fetchModelsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.sm,
+    backgroundColor: colors.primarySoft,
+    borderWidth: 1,
+    borderColor: colors.primaryMuted,
+  },
+  fetchModelsButtonDisabled: { opacity: 0.4 },
+  fetchModelsText: { ...typography.caption, color: colors.primary, fontWeight: '700' },
+  modelOptionsBox: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceSubtle,
+  },
+  modelOptionsHint: { ...typography.caption, color: colors.textMuted, fontSize: 11, marginBottom: spacing.xs },
   input: {
     ...typography.body,
     color: colors.text,

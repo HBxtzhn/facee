@@ -27,12 +27,15 @@ export function BankEditorModal({
   bankId,
   onClose,
   onOpenAiSettings,
+  onOpenManager,
 }: {
   visible: boolean;
   /** 本地题库 id（local- 前缀） */
   bankId: string | null;
   onClose: () => void;
   onOpenAiSettings: () => void;
+  /** 从编辑器跳到题库管理弹窗（切换 / 新建其它题库） */
+  onOpenManager?: () => void;
 }) {
   const saveLocalBank = useQuestionBankStore((state) => state.saveLocalBank);
   const [source, setSource] = useState<LocalBankSource | null>(null);
@@ -172,6 +175,17 @@ export function BankEditorModal({
             </Text>
           ) : null}
 
+          {onOpenManager ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="管理其它题库"
+              onPress={onOpenManager}
+              style={({ pressed }) => [styles.managerLink, pressed && styles.pressed]}
+            >
+              <Text style={styles.managerLinkText}>管理其它题库（切换 / 新建）</Text>
+            </Pressable>
+          ) : null}
+
           {questions.map((question) => {
             const confirmingDelete = confirmingDeleteId === question.id;
             return (
@@ -277,6 +291,12 @@ const styles = StyleSheet.create({
   listTitle: { ...typography.bodyStrong, color: colors.text, fontSize: 13 },
   listCount: { ...typography.caption, color: colors.textMuted },
   emptyText: { ...typography.caption, color: colors.textMuted, lineHeight: 18, marginBottom: spacing.sm },
+  managerLink: {
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  managerLinkText: { ...typography.caption, color: colors.primary, fontWeight: '600' },
   questionRow: {
     flexDirection: 'row',
     alignItems: 'center',
