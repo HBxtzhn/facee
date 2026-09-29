@@ -38,7 +38,8 @@ export interface FileSystemQuestionBankRepositoryOptions {
   zipArchive?: ZipArchiveModule;
 }
 
-const ROOT_NAME = 'facee-question-bank/';
+export const QUESTION_BANK_ROOT_NAME = 'facee-question-bank/';
+const ROOT_NAME = QUESTION_BANK_ROOT_NAME;
 const BANKS_NAME = 'banks/';
 const STAGING_NAME = 'staging/';
 const ACTIVE_POINTER_NAME = 'active';
@@ -953,7 +954,8 @@ function notifyProgress(
   }
 }
 
-function validateDecodedPackage(questionBank: QuestionBankPackage): Map<QuestionId, QuestionContent> {
+/** 校验完整题库包（catalog 与 contents 对齐）；本地题库保存前也走这一道校验 */
+export function validateDecodedPackage(questionBank: QuestionBankPackage): Map<QuestionId, QuestionContent> {
   assertCatalog(questionBank.catalog);
   if (!Array.isArray(questionBank.contents)) throw new Error('Question bank contents must be an array');
   const questionIds = new Set(questionBank.catalog.questions.map((question) => question.id));
