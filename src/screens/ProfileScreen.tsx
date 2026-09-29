@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  Bot,
   Database,
   Download,
   Eye,
+  FolderCog,
   Plus,
   Trophy,
 } from 'lucide-react-native';
@@ -13,6 +15,9 @@ import { useUserStore } from '../store/userStore';
 import { AppButton, ProgressBar, TabHeader } from '../components/ui';
 import { AppUpdateCard } from '../components/app-update-card';
 import { cardChrome, colors, radii, spacing, typography } from '../theme';
+import { BankManagerModal } from './profile/BankManagerModal';
+import { BankEditorModal } from './profile/BankEditorModal';
+import { LlmSettingsModal } from './profile/LlmSettingsModal';
 
 export function ProfileScreen() {
   const user = useUserStore();
@@ -26,9 +31,17 @@ export function ProfileScreen() {
   const clearInstallError = useQuestionBankStore((state) => state.clearInstallError);
   const initializeQuestionBank = useQuestionBankStore((state) => state.initialize);
   const reinstallQuestionBank = useQuestionBankStore((state) => state.installConfigured);
+  const createLocalBank = useQuestionBankStore((state) => state.createLocalBank);
+  const refreshBanks = useQuestionBankStore((state) => state.refreshBanks);
 
   const [urlDialogVisible, setUrlDialogVisible] = useState(false);
   const [draftUrl, setDraftUrl] = useState('');
+  // 本地题库弹窗组：管理列表 / 编辑器（bankId）/ AI 设置
+  const [managerVisible, setManagerVisible] = useState(false);
+  const [editorBankId, setEditorBankId] = useState<string | null>(null);
+  const [llmSettingsVisible, setLlmSettingsVisible] = useState(false);
+  const [creatingBank, setCreatingBank] = useState(false);
+  const isNative = Platform.OS !== 'web';
 
   useEffect(() => {
     void user.load();
@@ -55,6 +68,20 @@ export function ProfileScreen() {
     setSourceUrl(url);
     const ok = await reinstallQuestionBank();
     if (ok) setUrlDialogVisible(false);
+  };
+
+  const handleCreateLocal = async () => {
+    if (creatingBank) return;
+    setCreatingBank(true);
+    try {
+      const bankId = await createLocalBank('我的题库');
+      setManagerVisible(false);
+      setEditorBankId(bankId);
+    } catch {
+      // 错误已写入 store.installError；管理弹窗内会展示
+    } finally {
+      setCreatingBank(false);
+    }
   };
 
   return (
@@ -120,9 +147,25 @@ export function ProfileScreen() {
               accessibilityLabel="进入题目时默认展开答案"
             />
           </View>
+          {isNative ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="AI 设置"
+              onPress={() => setLlmSettingsVisible(true)}
+              style={({ pressed }) => [styles.settingRow, styles.aiSettingRow, pressed && styles.pressedRow]}
+            >
+              <View style={styles.settingIconBox}>
+                <Bot size={18} color={colors.primary} strokeWidth={2} />
+              </View>
+              <View style={styles.settingCopy}>
+                <Text style={styles.settingTitle}>AI 设置</Text>
+                <Text style={styles.settingSubtitle}>配置模型服务，从文本智能出题</Text>
+              </View>
+            </Pressable>
+          ) : null}
         </View>
 
-        {/* 本地题库管理 */}
+        {/* 本地题库管理：入口只在这里，功能全部弹窗化 */}
         <Text style={styles.sectionHeader}>本地题库信息</Text>
         <View style={styles.cardContainer}>
           {catalog ? (
@@ -138,16 +181,38 @@ export function ProfileScreen() {
                   </Text>
                 </View>
               </View>
-              <Pressable
-                onPress={openUrlDialog}
-                style={styles.bankActionRow}
-                accessibilityRole="button"
-                accessibilityLabel="更换题库"
-              >
-                <Download size={14} color={colors.textSecondary} strokeWidth={2} />
-                <Text style={styles.bankActionText}>更换题库</Text>
-              </Pressable>
+              {isNative ? (
+                <Pressable
+                  onPress={() => setManagerVisible(true)}
+                  style={styles.bankActionRow}
+                  accessibilityRole="button"
+                  accessibilityLabel="管理题库"
+                >
+                  <FolderCog size={14} color={colors.textSecondary} strokeWidth={2} />
+                  <Text style={styles.bankActionText}>管理题库（切换 / 本地题库 / 导入）</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={openUrlDialog}
+                  style={styles.bankActionRow}
+                  accessibilityRole="button"
+                  accessibilityLabel="更换题库"
+                >
+                  <Download size={14} color={colors.textSecondary} strokeWidth={2} />
+                  <Text style={styles.bankActionText}>更换题库</Text>
+                </Pressable>
+              )}
             </>
+          ) : isNative ? (
+            <Pressable
+              onPress={() => setManagerVisible(true)}
+              style={styles.bankActionRow}
+              accessibilityRole="button"
+              accessibilityLabel="管理题库"
+            >
+              <FolderCog size={16} color={colors.primary} strokeWidth={2} />
+              <Text style={styles.bankActionTextStrong}>新建 / 管理题库</Text>
+            </Pressable>
           ) : (
             <Pressable
               onPress={openUrlDialog}
@@ -237,6 +302,35 @@ export function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* 本地题库弹窗组：管理列表 →（叠层）编辑器；AI 设置独立 */}
+      {isNative ? (
+        <>
+          <BankManagerModal
+            visible={managerVisible}
+            onClose={() => setManagerVisible(false)}
+            onEditBank={(bankId) => {
+              setManagerVisible(false);
+              setEditorBankId(bankId);
+            }}
+            onCreateLocal={() => void handleCreateLocal()}
+            onAddOnline={() => {
+              setManagerVisible(false);
+              openUrlDialog();
+            }}
+          />
+          <BankEditorModal
+            visible={editorBankId !== null}
+            bankId={editorBankId}
+            onClose={() => {
+              setEditorBankId(null);
+              void refreshBanks();
+            }}
+            onOpenAiSettings={() => setLlmSettingsVisible(true)}
+          />
+          <LlmSettingsModal visible={llmSettingsVisible} onClose={() => setLlmSettingsVisible(false)} />
+        </>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -317,6 +411,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   settingCopy: { flex: 1 },
+  aiSettingRow: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  pressedRow: { opacity: 0.75 },
   settingTitle: { ...typography.bodyStrong, color: colors.text, fontSize: 14 },
   settingSubtitle: { ...typography.caption, color: colors.textMuted, marginTop: 2, fontSize: 12 },
   libraryRow: {
