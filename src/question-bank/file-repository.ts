@@ -119,6 +119,13 @@ export class FileSystemQuestionBankRepository
   private sequence = 0;
   /** 正文语料缓存：{ 题库命名空间, 语料内容 }；切换题库后自动失效 */
   private corpusCache: { namespace: string; contents: string } | null = null;
+  /**
+   * catalog 内存缓存：{ 题库命名空间, 解析后的目录 }。
+   * 安装总是落在新 namespace 再原子切换指针（createNamespace），同一 namespace
+   * 的 catalog.json 不会被原地改写，因此按 namespace 键缓存是安全的；
+   * getQuestion / listQuestions / getContent 不再每次整读整解析 catalog.json。
+   */
+  private catalogCache: { namespace: string; catalog: QuestionBankCatalog } | null = null;
 
   constructor(options: FileSystemQuestionBankRepositoryOptions = {}) {
     this.fs = options.fileSystem ?? FileSystem;
@@ -126,11 +133,23 @@ export class FileSystemQuestionBankRepository
   }
 
   async getCatalog(): Promise<QuestionBankCatalog | null> {
+    return (await this.readActiveCatalog())?.catalog ?? null;
+  }
+
+  /**
+   * 指针当前指向题库的（缓存命中的）目录。namespace 与 catalog 取自同一条缓存，
+   * 保留「元数据与 Markdown 不跨代混用」的保证。
+   */
+  private async readActiveCatalog(): Promise<{ namespace: string; catalog: QuestionBankCatalog } | null> {
     const namespace = await this.readActiveNamespace();
     if (!namespace) return null;
+    if (this.catalogCache?.namespace === namespace) return this.catalogCache;
     try {
-      return await this.readCatalogAt(this.bankPath(namespace));
+      const catalog = await this.readCatalogAt(this.bankPath(namespace));
+      this.catalogCache = { namespace, catalog };
+      return this.catalogCache;
     } catch {
+      this.catalogCache = null;
       return null;
     }
   }
@@ -141,13 +160,14 @@ export class FileSystemQuestionBankRepository
   }
 
   async getContent(id: QuestionId): Promise<QuestionContent | null> {
-    const namespace = await this.readActiveNamespace();
-    if (!namespace || !isSafeQuestionId(id)) return null;
+    if (!isSafeQuestionId(id)) return null;
 
     try {
       // Resolve metadata and Markdown from the same namespace. A replacement
       // can switch the pointer between calls, but it cannot mix generations.
-      const catalog = await this.readCatalogAt(this.bankPath(namespace));
+      const resolved = await this.readActiveCatalog();
+      if (!resolved) return null;
+      const { namespace, catalog } = resolved;
       const question = catalog.questions.find((candidate) => candidate.id === id);
       if (!question) return null;
       const questionMd = await this.readUtf8(this.questionPath(namespace, id));
@@ -322,6 +342,9 @@ export class FileSystemQuestionBankRepository
   async clear(): Promise<void> {
     await this.removeDirectory(this.bankRoot());
     await this.ensureRoot();
+    // 题库已被删除：目录与语料缓存一并失效，避免常驻已删题库的元数据
+    this.catalogCache = null;
+    this.corpusCache = null;
   }
 
   private async validateExtractedFiles(

@@ -57,6 +57,16 @@ class MemoryFileSystem {
   }
 }
 
+/** 统计 catalog.json 的磁盘读取次数，用于断言内存缓存命中 */
+class CountingFileSystem extends MemoryFileSystem {
+  catalogReads = 0;
+
+  override async readAsStringAsync(uri: string) {
+    if (uri.includes('catalog.json')) this.catalogReads += 1;
+    return super.readAsStringAsync(uri);
+  }
+}
+
 function zipEntriesForFixture(): ZipEntryLike[] {
   return [
     { path: 'catalog.json', isDirectory: false },
@@ -223,5 +233,58 @@ describe('FileSystemQuestionBankRepository installation safety', () => {
 
     expect((await repository.getCatalog())?.title).toBe(TEST_QUESTION_BANK.catalog.title);
     expect((await repository.getContent('fixture-java-001'))?.questionMd).toBe(originalQuestion?.questionMd);
+  });
+});
+
+describe('FileSystemQuestionBankRepository catalog 内存缓存', () => {
+  it('getCatalog / getQuestion / listQuestions 反复调用只整读一次 catalog.json', async () => {
+    const fileSystem = new CountingFileSystem();
+    const repository = new FileSystemQuestionBankRepository({
+      fileSystem: fileSystem as never,
+      zipArchive: createZipArchive(fileSystem),
+    });
+
+    await repository.install(TEST_QUESTION_BANK);
+    // 安装只写不读；缓存为空，首次读取会把目录载入内存
+    expect(fileSystem.catalogReads).toBe(0);
+
+    expect(await repository.getCatalog()).not.toBeNull();
+    expect(await repository.getQuestion('fixture-java-001')).not.toBeNull();
+    expect(await repository.getQuestion('fixture-java-001')).not.toBeNull();
+    expect(await repository.listQuestions()).not.toHaveLength(0);
+    expect(await repository.getContent('fixture-java-001')).not.toBeNull();
+
+    expect(fileSystem.catalogReads).toBe(1);
+  });
+
+  it('换库（指针切到新 namespace）后缓存自动失效并重新加载', async () => {
+    const fileSystem = new CountingFileSystem();
+    const repository = new FileSystemQuestionBankRepository({
+      fileSystem: fileSystem as never,
+      zipArchive: createZipArchive(fileSystem),
+    });
+
+    await repository.install(TEST_QUESTION_BANK);
+    expect(await repository.getCatalog()).not.toBeNull();
+    const readsBefore = fileSystem.catalogReads;
+
+    await repository.install(TEST_QUESTION_BANK);
+    expect((await repository.getCatalog())?.title).toBe(TEST_QUESTION_BANK.catalog.title);
+    expect(fileSystem.catalogReads).toBeGreaterThan(readsBefore);
+  });
+
+  it('clear() 后缓存失效，题库回到空态', async () => {
+    const fileSystem = new CountingFileSystem();
+    const repository = new FileSystemQuestionBankRepository({
+      fileSystem: fileSystem as never,
+      zipArchive: createZipArchive(fileSystem),
+    });
+
+    await repository.install(TEST_QUESTION_BANK);
+    expect(await repository.getCatalog()).not.toBeNull();
+
+    await repository.clear();
+    expect(await repository.getCatalog()).toBeNull();
+    expect(await repository.getQuestion('fixture-java-001')).toBeNull();
   });
 });
