@@ -15,6 +15,9 @@ const repository: QuestionBankRepository = {
   searchBody: async () => [],
   install: async () => ({ questionCount: 0, tagCount: 0 }),
   clear: async () => undefined,
+  listBanks: async () => [],
+  switchBank: async () => undefined,
+  deleteBank: async () => undefined,
 };
 
 describe('configured question-bank installer', () => {

@@ -96,6 +96,19 @@ export interface InstallResult {
   tagCount: number;
 }
 
+/** 已安装题库的摘要（listBanks 返回） */
+export interface InstalledBankSummary {
+  /** 题库 catalog.id；本地题库约定以 local- 前缀开头 */
+  catalogId: string;
+  /** 存储命名空间（内部标识） */
+  namespace: string;
+  title: string;
+  questionCount: number;
+  source: 'local' | 'online';
+  /** 是否为当前激活（active 指针指向）的题库 */
+  active: boolean;
+}
+
 export interface QuestionBankRepository {
   /** Return the installed catalog, or null when this device has no bank. */
   getCatalog(): Promise<QuestionBankCatalog | null>;
@@ -117,6 +130,12 @@ export interface QuestionBankRepository {
   ): Promise<InstallResult>;
   /** Remove the installed bank. Favorites and user progress are unaffected. */
   clear(): Promise<void>;
+  /** 列出本机全部已安装题库（多题库共存；本地 + 线上）。 */
+  listBanks(): Promise<InstalledBankSummary[]>;
+  /** 把当前使用的题库切换为指定 catalog.id 的题库。 */
+  switchBank(catalogId: string): Promise<void>;
+  /** 删除一个已安装题库；若删除的是当前题库，自动切到剩余题库或清空。 */
+  deleteBank(catalogId: string): Promise<void>;
 }
 
 export interface RemoteQuestionBankRepository extends QuestionBankRepository {

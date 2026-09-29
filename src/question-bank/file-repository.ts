@@ -9,6 +9,7 @@ import type {
   InstallationProgress,
   InstallationProgressListener,
   InstallResult,
+  InstalledBankSummary,
   Question,
   QuestionBankCatalog,
   QuestionBankPackage,
@@ -41,9 +42,21 @@ const ROOT_NAME = 'facee-question-bank/';
 const BANKS_NAME = 'banks/';
 const STAGING_NAME = 'staging/';
 const ACTIVE_POINTER_NAME = 'active';
+const REGISTRY_NAME = 'registry.json';
 const DOWNLOAD_NAME = 'facee-question-bank-downloads/';
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SAFE_NAMESPACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
+
+/**
+ * 题库注册表：catalogId -> namespace。
+ * 多题库共存的关键——install 激活新库后只删除「同 catalogId」的旧 namespace，
+ * 线上题库与本地题库互不误删。v1.2.1 之前没有注册表，旧安装通过
+ * install 时的 previousCatalogId 自动迁移登记。
+ */
+type BankRegistry = Record<string, string>;
+
+/** 本地题库的 catalogId 前缀约定（local-banks.ts 生成），用于 UI 区分来源 */
+export const LOCAL_BANK_ID_PREFIX = 'local-';
 
 export const QUESTION_BANK_ZIP_CATALOG_PATH = 'catalog.json';
 /** 正文全文搜索语料（§6.2）：安装期生成，一行一题 */
@@ -214,6 +227,8 @@ export class FileSystemQuestionBankRepository
     const stagingPath = this.stagingPath(namespace);
     const finalPath = this.bankPath(namespace);
     const previousNamespace = await this.readActiveNamespace();
+    // 激活前读取旧库的 catalog.id（旧库目录在删除前不会被改动）
+    const previousCatalogId = await this.readCatalogIdAt(previousNamespace);
     const total = questionBank.contents.length + 1;
     notifyProgress(onProgress, { completed: 0, total, label: '正在准备题库' });
     let activated = false;
@@ -233,6 +248,13 @@ export class FileSystemQuestionBankRepository
           await this.fs.writeAsStringAsync(
             `${questionDirectory}answer.md`,
             content.answerMd,
+            { encoding: 'utf8' },
+          );
+        }
+        if (content.followupsMd) {
+          await this.fs.writeAsStringAsync(
+            `${questionDirectory}followups.md`,
+            content.followupsMd,
             { encoding: 'utf8' },
           );
         }
@@ -257,9 +279,12 @@ export class FileSystemQuestionBankRepository
       await this.activateDirectory(stagingPath, finalPath, namespace, previousNamespace);
       activated = true;
       notifyProgress(onProgress, { completed: total, total, label: '题库安装完成' });
-      if (previousNamespace && previousNamespace !== namespace) {
-        await this.removeNamespace(previousNamespace).catch(() => undefined);
-      }
+      await this.reconcileBanksAfterActivate(
+        questionBank.catalog.id,
+        namespace,
+        previousNamespace,
+        previousCatalogId,
+      );
       return {
         questionCount: questionBank.catalog.questions.length,
         tagCount: questionBank.catalog.tags.length,
@@ -319,13 +344,12 @@ export class FileSystemQuestionBankRepository
       await this.writeCorpus(stagingPath, corpusLines);
 
       const previousNamespace = await this.readActiveNamespace();
+      const previousCatalogId = await this.readCatalogIdAt(previousNamespace);
       notifyProgress(onProgress, { completed: total, total, label: '正在激活题库' });
       await this.activateDirectory(stagingPath, finalPath, token, previousNamespace);
       activated = true;
       notifyProgress(onProgress, { completed: total, total, label: '题库安装完成' });
-      if (previousNamespace && previousNamespace !== token) {
-        await this.removeNamespace(previousNamespace).catch(() => undefined);
-      }
+      await this.reconcileBanksAfterActivate(catalog.id, token, previousNamespace, previousCatalogId);
       return { questionCount: catalog.questions.length, tagCount: catalog.tags.length };
     } catch (error) {
       if (!activated) {
@@ -345,6 +369,170 @@ export class FileSystemQuestionBankRepository
     // 题库已被删除：目录与语料缓存一并失效，避免常驻已删题库的元数据
     this.catalogCache = null;
     this.corpusCache = null;
+  }
+
+  /** 列出本机全部已安装题库（banks/ 目录扫描 + 逐库读 catalog）。 */
+  async listBanks(): Promise<InstalledBankSummary[]> {
+    const activeNamespace = await this.readActiveNamespace();
+    let namespaces: string[];
+    try {
+      const listing = await this.fs.readDirectoryAsync(this.banksRoot());
+      namespaces = listing.filter((name) => isSafeNamespace(name));
+    } catch {
+      return [];
+    }
+
+    const banks: InstalledBankSummary[] = [];
+    for (const namespace of namespaces) {
+      const active = namespace === activeNamespace;
+      try {
+        const catalog = await this.readCatalogAt(this.bankPath(namespace));
+        const catalogId = catalog.id || namespace;
+        banks.push({
+          catalogId,
+          namespace,
+          title: catalog.title || catalogId,
+          questionCount: catalog.questions.length,
+          source: catalogId.startsWith(LOCAL_BANK_ID_PREFIX) ? 'local' : 'online',
+          active,
+        });
+      } catch {
+        banks.push({
+          catalogId: namespace,
+          namespace,
+          title: '（无法读取）',
+          questionCount: 0,
+          source: 'online',
+          active,
+        });
+      }
+    }
+    return banks.sort(
+      (left, right) => Number(right.active) - Number(left.active) || left.title.localeCompare(right.title),
+    );
+  }
+
+  /** 把当前使用的题库切换为指定 catalog.id 的题库（原子指针切换）。 */
+  async switchBank(catalogId: string): Promise<void> {
+    const registry = await this.readRegistry();
+    let namespace = registry[catalogId];
+    if (!namespace) {
+      // 未登记（如旧版本升级后的首次切换）：按 catalog.id 扫描目录并补登记
+      const match = (await this.listBanks()).find((bank) => bank.catalogId === catalogId);
+      if (!match) throw new Error(`没有找到题库：${catalogId}`);
+      namespace = match.namespace;
+      await this.writeRegistry({ ...registry, [catalogId]: namespace });
+    }
+    const info = await this.fs.getInfoAsync(this.bankPath(namespace));
+    if (!info.exists) throw new Error('题库文件已丢失，请重新安装');
+    const previous = await this.readActiveNamespace();
+    if (previous === namespace) return;
+    await this.activatePointer(namespace, previous);
+    // catalogCache 按 namespace 键控：指针切换后自动 miss 重读，无需失效
+  }
+
+  /** 删除一个已安装题库；删的是当前题库时自动切到剩余题库（或清空指针）。 */
+  async deleteBank(catalogId: string): Promise<void> {
+    const registry = await this.readRegistry();
+    let namespace = registry[catalogId];
+    if (!namespace) {
+      const match = (await this.listBanks()).find((bank) => bank.catalogId === catalogId);
+      if (!match) throw new Error(`没有找到题库：${catalogId}`);
+      namespace = match.namespace;
+    }
+    const wasActive = (await this.readActiveNamespace()) === namespace;
+    await this.removeNamespace(namespace);
+    delete registry[catalogId];
+    for (const [id, ns] of Object.entries(registry)) {
+      if (ns === namespace) delete registry[id];
+    }
+    await this.writeRegistry(registry);
+    if (wasActive) {
+      const remaining = Object.entries(registry);
+      if (remaining.length > 0) {
+        await this.activatePointer(remaining[0][1], namespace);
+      } else {
+        await this.removeFile(this.activePointerPath());
+      }
+      this.catalogCache = null;
+      this.corpusCache = null;
+    }
+  }
+
+  /**
+   * 激活后的多题库对账：登记新库，只删除「同 catalogId」的旧 namespace。
+   * 不同 catalogId 的旧 active（旧版本升级迁移路径）登记保留，实现共存。
+   */
+  private async reconcileBanksAfterActivate(
+    catalogId: string,
+    namespace: string,
+    previousNamespace: string | null,
+    previousCatalogId: string | null,
+  ): Promise<void> {
+    const registry = await this.readRegistry();
+    const stale: string[] = [];
+    const prior = registry[catalogId];
+    if (prior && prior !== namespace) stale.push(prior);
+    if (previousNamespace && previousNamespace !== namespace && previousCatalogId === catalogId) {
+      if (!stale.includes(previousNamespace)) stale.push(previousNamespace);
+    }
+
+    registry[catalogId] = namespace;
+    if (
+      previousNamespace &&
+      previousCatalogId &&
+      previousCatalogId !== catalogId &&
+      registry[previousCatalogId] !== previousNamespace
+    ) {
+      registry[previousCatalogId] = previousNamespace;
+    }
+    await this.writeRegistry(registry);
+
+    for (const ns of stale) {
+      if (ns === registry[catalogId]) continue;
+      await this.removeNamespace(ns).catch(() => undefined);
+    }
+  }
+
+  private async readCatalogIdAt(namespace: string | null): Promise<string | null> {
+    if (!namespace) return null;
+    try {
+      const catalog = await this.readCatalogAt(this.bankPath(namespace));
+      return catalog.id;
+    } catch {
+      return null;
+    }
+  }
+
+  private registryPath(): string {
+    return `${this.bankRoot()}${REGISTRY_NAME}`;
+  }
+
+  private async readRegistry(): Promise<BankRegistry> {
+    try {
+      const value: unknown = JSON.parse(await this.readUtf8(this.registryPath()));
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+      const registry: BankRegistry = {};
+      for (const [catalogId, namespace] of Object.entries(value)) {
+        if (catalogId.length > 0 && typeof namespace === 'string' && isSafeNamespace(namespace)) {
+          registry[catalogId] = namespace;
+        }
+      }
+      return registry;
+    } catch {
+      return {};
+    }
+  }
+
+  private async writeRegistry(registry: BankRegistry): Promise<void> {
+    try {
+      await this.fs.writeAsStringAsync(this.registryPath(), JSON.stringify(registry), {
+        encoding: 'utf8',
+      });
+    } catch {
+      // 注册表写失败不会丢题库数据：下次 install/listBanks 会重新迁移登记，
+      // 最坏情况是「同 id 替换」退化为「共存」，可手动删除。
+    }
   }
 
   private async validateExtractedFiles(

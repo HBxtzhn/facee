@@ -4,6 +4,7 @@ import { buildCorpus, searchCorpus, buildSnippet } from './search';
 import previewBank from './__fixtures__/preview-bank.json';
 import type {
   InstallResult,
+  InstalledBankSummary,
   Question,
   QuestionBankCatalog,
   QuestionBankPackage,
@@ -84,5 +85,18 @@ export class PreviewQuestionBankRepository implements QuestionBankRepository {
 
   async clear(): Promise<void> {
     // 示例题库常驻内存，Web 端无需清理
+  }
+
+  async listBanks(): Promise<InstalledBankSummary[]> {
+    // Web 预览只有内置示例库，没有多题库；UI 层据此隐藏本地题库入口
+    return [];
+  }
+
+  async switchBank(_catalogId: string): Promise<void> {
+    throw new Error('Web 预览不支持切换题库，请在移动端使用');
+  }
+
+  async deleteBank(_catalogId: string): Promise<void> {
+    throw new Error('Web 预览不支持删除题库，请在移动端使用');
   }
 }

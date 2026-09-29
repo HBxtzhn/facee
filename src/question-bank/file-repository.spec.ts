@@ -35,6 +35,17 @@ class MemoryFileSystem {
     return entry.value ?? '';
   }
 
+  async readDirectoryAsync(uri: string) {
+    const prefix = uri.endsWith('/') ? uri : `${uri}/`;
+    const children = new Set<string>();
+    for (const key of this.entries.keys()) {
+      if (!key.startsWith(prefix)) continue;
+      const segment = key.slice(prefix.length).split('/')[0];
+      if (segment) children.add(segment);
+    }
+    return [...children];
+  }
+
   async deleteAsync(uri: string) {
     for (const key of this.entries.keys()) {
       if (key === uri || key.startsWith(uri.endsWith('/') ? uri : `${uri}/`)) this.entries.delete(key);
@@ -286,5 +297,107 @@ describe('FileSystemQuestionBankRepository catalog 内存缓存', () => {
     await repository.clear();
     expect(await repository.getCatalog()).toBeNull();
     expect(await repository.getQuestion('fixture-java-001')).toBeNull();
+  });
+});
+
+/** 换 catalogId 的克隆包：contents 不变（validateDecodedPackage 要求 id 对齐） */
+function bankWithId(id: string) {
+  return {
+    catalog: { ...TEST_QUESTION_BANK.catalog, id },
+    contents: TEST_QUESTION_BANK.contents,
+  };
+}
+
+describe('FileSystemQuestionBankRepository 多题库共存', () => {
+  it('不同 catalogId 的题库共存，listBanks 列出两者且 active 正确', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+
+    await repository.install(TEST_QUESTION_BANK);
+    await repository.install(bankWithId('local-my-bank'));
+
+    const banks = await repository.listBanks();
+    expect(banks).toHaveLength(2);
+    const ids = banks.map((bank) => bank.catalogId).sort();
+    expect(ids).toEqual(['facee-fixture', 'local-my-bank']);
+    // 后安装的题库是当前 active
+    expect(banks.find((bank) => bank.catalogId === 'local-my-bank')?.active).toBe(true);
+    expect(banks.find((bank) => bank.catalogId === 'facee-fixture')?.active).toBe(false);
+    // 本地前缀识别
+    expect(banks.find((bank) => bank.catalogId === 'local-my-bank')?.source).toBe('local');
+    expect(banks.find((bank) => bank.catalogId === 'facee-fixture')?.source).toBe('online');
+  });
+
+  it('同 catalogId 重复安装只替换自己：旧 namespace 被删，别的题库保留', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+
+    await repository.install(TEST_QUESTION_BANK);
+    await repository.install(bankWithId('local-my-bank'));
+    await repository.install(bankWithId('local-my-bank')); // 本地题库第二次保存
+
+    const banks = await repository.listBanks();
+    expect(banks).toHaveLength(2);
+    expect(banks.filter((bank) => bank.catalogId === 'local-my-bank')).toHaveLength(1);
+    expect((await repository.listBanks()).find((bank) => bank.catalogId === 'facee-fixture')).toBeTruthy();
+  });
+
+  it('switchBank 切换当前题库，getCatalog 跟随', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+
+    await repository.install(TEST_QUESTION_BANK);
+    await repository.install(bankWithId('local-my-bank'));
+
+    await repository.switchBank('facee-fixture');
+    expect((await repository.getCatalog())?.id).toBe('facee-fixture');
+    expect((await repository.listBanks()).find((bank) => bank.active)?.catalogId).toBe('facee-fixture');
+
+    await repository.switchBank('local-my-bank');
+    expect((await repository.getCatalog())?.id).toBe('local-my-bank');
+  });
+
+  it('deleteBank 删除非 active 题库不影响当前题库；删除 active 自动切换', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+
+    await repository.install(TEST_QUESTION_BANK);
+    await repository.install(bankWithId('local-my-bank'));
+
+    // 删除非 active 的旧库
+    await repository.deleteBank('facee-fixture');
+    expect(await repository.listBanks()).toHaveLength(1);
+    expect((await repository.getCatalog())?.id).toBe('local-my-bank');
+
+    // 删除 active 且是最后一个 → 回到空态
+    await repository.deleteBank('local-my-bank');
+    expect(await repository.listBanks()).toHaveLength(0);
+    expect(await repository.getCatalog()).toBeNull();
+  });
+
+  it('deleteBank 删除 active 但还有其他题库时，自动切到剩余题库', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+
+    await repository.install(TEST_QUESTION_BANK);
+    await repository.install(bankWithId('local-my-bank'));
+
+    await repository.deleteBank('local-my-bank');
+    expect((await repository.getCatalog())?.id).toBe('facee-fixture');
+  });
+
+  it('install 不再丢弃 followupsMd，getContent 能读回追问', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+    const packageWithFollowups = {
+      catalog: TEST_QUESTION_BANK.catalog,
+      contents: TEST_QUESTION_BANK.contents.map((content, index) =>
+        index === 0 ? { ...content, followupsMd: '## 追问：为什么？\n\n因为。' } : content,
+      ),
+    };
+
+    await repository.install(packageWithFollowups);
+    const content = await repository.getContent(TEST_QUESTION_BANK.contents[0].id);
+    expect(content?.followupsMd).toBe('## 追问：为什么？\n\n因为。');
   });
 });
