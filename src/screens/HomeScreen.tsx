@@ -169,6 +169,12 @@ export function HomeScreen() {
     });
   }
 
+  // 「继续上次练习」只在当前题库里真的有这道题时展示：
+  // 换题库后 lastViewed 可能是旧库遗留，避免点进去报「没有找到元数据」
+  const lastViewedExists =
+    lastViewedId !== null &&
+    (catalog === null || catalog.questions.some((question) => question.id === lastViewedId));
+
   // 有分类就用分类（§5.1）；旧格式题库没有分类，回退到标签领域，行为不回归。
   const hasCategories = categories.length > 0;
   const entries: HomeEntry[] = hasCategories
@@ -230,7 +236,7 @@ export function HomeScreen() {
             />
 
             {/* 强化但不过度臃肿的“继续上次”快捷卡片 */}
-            {lastViewedId ? (
+            {lastViewedExists ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`继续上次练习，题目 ${lastViewedId}`}
