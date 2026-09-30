@@ -230,6 +230,10 @@ export class FileSystemQuestionBankRepository
     const previousNamespace = await this.readActiveNamespace();
     // 激活前读取旧库的 catalog.id（旧库目录在删除前不会被改动）
     const previousCatalogId = await this.readCatalogIdAt(previousNamespace);
+    // 同 catalogId 的旧安装目录：install 包不含资产文件，重建时从它继承图片
+    const registry = await this.readRegistry();
+    const priorOwnNamespace = registry[questionBank.catalog.id]
+      ?? (previousCatalogId === questionBank.catalog.id ? previousNamespace : null);
     const total = questionBank.contents.length + 1;
     notifyProgress(onProgress, { completed: 0, total, label: '正在准备题库' });
     let activated = false;
@@ -276,6 +280,9 @@ export class FileSystemQuestionBankRepository
           encodeCorpusLine(content.id, `${content.questionMd}\n${content.answerMd ?? ''}`),
         ),
       );
+      // 资产继承：包格式不含图片文件，从同 catalogId 旧安装逐题拷入（尽力而为），
+      // 否则本地题库每次「保存并启用」重建 namespace 都会丢图
+      await this.inheritAssetsFromPriorBank(stagingPath, questionBank, priorOwnNamespace);
       notifyProgress(onProgress, { completed: total, total, label: '正在激活题库' });
       await this.activateDirectory(stagingPath, finalPath, namespace, previousNamespace);
       activated = true;
@@ -458,6 +465,91 @@ export class FileSystemQuestionBankRepository
       this.catalogCache = null;
       this.corpusCache = null;
     }
+  }
+
+  /**
+   * 把已装题库反向重建为完整 QuestionBankPackage（含每题 followupsMd），
+   * 供「复制为本地题库」。找不到该题库返回 null；题库数据损坏时抛错。
+   * 不导出 assetBaseUri：副本安装后由 getContent 按新 namespace 重新解析。
+   */
+  async exportPackage(catalogId: string): Promise<QuestionBankPackage | null> {
+    const registry = await this.readRegistry();
+    let namespace = registry[catalogId];
+    if (!namespace) {
+      const match = (await this.listBanks()).find((bank) => bank.catalogId === catalogId);
+      if (!match) return null;
+      namespace = match.namespace;
+    }
+    const root = this.bankPath(namespace);
+    const catalog = await this.readCatalogAt(root);
+    const contents: QuestionContent[] = [];
+    for (const question of catalog.questions) {
+      contents.push(await this.readQuestionContentAt(namespace, question.id));
+    }
+    return { catalog, contents };
+  }
+
+  /** 复制源题库的题目 assets/ 目录到目标题库（尽力而为：缺失或失败逐题跳过）。 */
+  async copyBankAssets(sourceCatalogId: string, targetCatalogId: string): Promise<void> {
+    const registry = await this.readRegistry();
+    const sourceNamespace = registry[sourceCatalogId];
+    const targetNamespace = registry[targetCatalogId];
+    if (!sourceNamespace || !targetNamespace) return;
+    const catalog = await this.readCatalogAt(this.bankPath(sourceNamespace));
+    for (const question of catalog.questions) {
+      const source = this.assetsPath(sourceNamespace, question.id);
+      try {
+        const info = await this.fs.getInfoAsync(source);
+        if (!info.exists || !info.isDirectory) continue;
+        // 目标目录交给 copyAsync 创建：先建空目录再拷会触发「拷进子目录」歧义
+        await this.fs.copyAsync({ from: source, to: this.assetsPath(targetNamespace, question.id) });
+      } catch {
+        // 资产复制失败只影响该题图片，不阻塞题库复制
+      }
+    }
+  }
+
+  /**
+   * install 重建时继承同 catalogId 旧安装的题目图片。本地题库的编辑流程
+   * （保存/复制）都走「整包重建」，而包格式不携带资产文件，不继承则每次
+   * 保存都会丢图。逐题尽力而为：旧库无资产或拷贝失败只影响图片不影响安装。
+   */
+  private async inheritAssetsFromPriorBank(
+    stagingPath: string,
+    questionBank: QuestionBankPackage,
+    priorNamespace: string | null,
+  ): Promise<void> {
+    if (!priorNamespace) return;
+    for (const question of questionBank.catalog.questions) {
+      try {
+        const source = this.assetsPath(priorNamespace, question.id);
+        const info = await this.fs.getInfoAsync(source);
+        if (!info.exists || !info.isDirectory) continue;
+        await this.fs.copyAsync({
+          from: source,
+          to: joinUri(this.questionDirectory(stagingPath, question.id), 'assets/'),
+        });
+      } catch {
+        // 尽力而为：缺图不阻塞安装
+      }
+    }
+  }
+
+  /** 读单题的完整内容文件（question/answer/followups），缺省文件记为 null */
+  private async readQuestionContentAt(
+    namespace: string,
+    id: QuestionId,
+  ): Promise<QuestionContent> {
+    const questionMd = await this.readUtf8(this.questionPath(namespace, id));
+    const answerMd = await this.readOptionalMarkdown(this.answerPath(namespace, id));
+    const followupsMd = await this.readOptionalMarkdown(this.followupsPath(namespace, id));
+    return { id, questionMd, answerMd, followupsMd };
+  }
+
+  private async readOptionalMarkdown(path: string): Promise<string | null> {
+    const info = await this.fs.getInfoAsync(path);
+    if (!info.exists || info.isDirectory) return null;
+    return this.readUtf8(path);
   }
 
   /**

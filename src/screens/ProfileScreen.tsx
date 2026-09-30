@@ -3,10 +3,12 @@ import { Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextI
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Bot,
+  ChevronRight,
   Database,
   Download,
   Eye,
   FolderCog,
+  Pencil,
   Plus,
   Trophy,
 } from 'lucide-react-native';
@@ -196,10 +198,24 @@ export function ProfileScreen() {
                     {catalog.questions.length} 道精选真题 · {catalog.tags.length} 个分类标签
                   </Text>
                 </View>
+                {isNative ? (
+                  <View style={styles.libraryAffordance}>
+                    {currentBankIsLocal ? (
+                      <>
+                        <Pencil size={14} color={colors.primary} strokeWidth={2} />
+                        <Text style={styles.libraryAffordanceText}>编辑</Text>
+                      </>
+                    ) : (
+                      <ChevronRight size={16} color={colors.textMuted} strokeWidth={2} />
+                    )}
+                  </View>
+                ) : null}
               </Pressable>
               {isNative ? (
                 <Text style={styles.bankHintRow}>
-                  {currentBankIsLocal ? '点上方题库可直接编辑；点开可切换其它题库' : '点上方题库可切换 / 新建本地题库'}
+                  {currentBankIsLocal
+                    ? '点上方题库可直接编辑内容'
+                    : '点上方题库可切换 / 新建本地题库 / 复制出可编辑副本'}
                 </Text>
               ) : (
                 <Pressable
@@ -320,6 +336,10 @@ export function ProfileScreen() {
             visible={managerVisible}
             onClose={() => setManagerVisible(false)}
             onEditBank={(bankId) => {
+              setManagerVisible(false);
+              setEditorBankId(bankId);
+            }}
+            onBankCopied={(bankId) => {
               setManagerVisible(false);
               setEditorBankId(bankId);
             }}
@@ -448,6 +468,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   libraryDetails: { flex: 1 },
+  libraryAffordance: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  libraryAffordanceText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '700',
+    fontSize: 12,
+  },
   libraryTitle: { ...typography.bodyStrong, color: colors.text, fontSize: 14 },
   libraryMeta: { ...typography.caption, color: colors.textMuted, marginTop: 2, fontSize: 12 },
   bankActionRow: {

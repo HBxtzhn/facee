@@ -1,24 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Database, FolderPlus, Download, Pencil, Trash2 } from 'lucide-react-native';
+import { Database, FolderPlus, Download, Pencil, Trash2, Copy } from 'lucide-react-native';
 import { useQuestionBankStore } from '../../question-bank/store';
 import { colors, radii, spacing, typography } from '../../theme';
 import { ModalSheet, SheetActions, SheetError } from './ModalSheet';
 
 /**
  * 题库管理弹窗：列出本机全部题库（本地 + 线上），点按切换当前使用；
- * 本地题库可进入编辑，所有题库可删除（行内二次确认）。
+ * 任意题库可一键复制成本地可编辑副本；本地题库可进入编辑，所有题库可删除（行内二次确认）。
  */
 export function BankManagerModal({
   visible,
   onClose,
   onEditBank,
+  onBankCopied,
   onCreateLocal,
   onAddOnline,
 }: {
   visible: boolean;
   onClose: () => void;
   onEditBank: (bankId: string) => void;
+  onBankCopied: (bankId: string) => void;
   onCreateLocal: () => void;
   onAddOnline: () => void;
 }) {
@@ -26,6 +28,7 @@ export function BankManagerModal({
   const banksLoading = useQuestionBankStore((state) => state.banksLoading);
   const refreshBanks = useQuestionBankStore((state) => state.refreshBanks);
   const switchBank = useQuestionBankStore((state) => state.switchBank);
+  const copyBank = useQuestionBankStore((state) => state.copyBank);
   const deleteLocalBank = useQuestionBankStore((state) => state.deleteLocalBank);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
@@ -51,6 +54,20 @@ export function BankManagerModal({
     }
   }
 
+  async function handleCopy(catalogId: string) {
+    if (busyId) return;
+    setBusyId(catalogId);
+    setError(null);
+    try {
+      const bankId = await copyBank(catalogId);
+      onBankCopied(bankId);
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : String(copyError));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function handleDelete(bankId: string) {
     if (busyId) return;
     setBusyId(bankId);
@@ -69,7 +86,7 @@ export function BankManagerModal({
     <ModalSheet
       visible={visible}
       title="管理题库"
-      hint="点按题库切换当前使用；本地题库可随时编辑维护，删除不影响其它题库。"
+      hint="点按题库切换当前使用；「复制」把任意题库（含线上）复制成本地可编辑副本，编辑不影响原题库。"
       onClose={onClose}
       footer={
         <View style={styles.footerActions}>
@@ -139,6 +156,15 @@ export function BankManagerModal({
               </View>
             </Pressable>
             <View style={styles.bankActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`复制题库 ${bank.title} 为本地可编辑副本`}
+                onPress={() => void handleCopy(bank.catalogId)}
+                style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+                disabled={busyId !== null}
+              >
+                <Copy size={15} color={colors.textSecondary} strokeWidth={2} />
+              </Pressable>
               {bank.source === 'local' ? (
                 <Pressable
                   accessibilityRole="button"

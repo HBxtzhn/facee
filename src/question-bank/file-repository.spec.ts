@@ -14,7 +14,7 @@ import type { ZipEntryLike } from './file-repository';
 class MemoryFileSystem {
   readonly documentDirectory = 'file:///documents/';
   readonly cacheDirectory = 'file:///cache/';
-  private readonly entries = new Map<string, { isDirectory: boolean; value?: string }>();
+  protected readonly entries = new Map<string, { isDirectory: boolean; value?: string }>();
 
   async getInfoAsync(uri: string) {
     const entry = this.entries.get(uri);
@@ -399,5 +399,114 @@ describe('FileSystemQuestionBankRepository 多题库共存', () => {
     await repository.install(packageWithFollowups);
     const content = await repository.getContent(TEST_QUESTION_BANK.contents[0].id);
     expect(content?.followupsMd).toBe('## 追问：为什么？\n\n因为。');
+  });
+});
+
+class CopyableFileSystem extends MemoryFileSystem {
+  copied: { from: string; to: string }[] = [];
+
+  async copyAsync({ from, to }: { from: string; to: string }) {
+    this.copied.push({ from, to });
+    const fromPrefix = from.endsWith('/') ? from : `${from}/`;
+    const toPrefix = to.endsWith('/') ? to : `${to}/`;
+    for (const [key, value] of [...this.entries.entries()]) {
+      if (key === from || key.startsWith(fromPrefix)) {
+        this.entries.set(`${toPrefix}${key.slice(fromPrefix.length)}`, value);
+      }
+    }
+  }
+}
+
+describe('FileSystemQuestionBankRepository exportPackage / copyBankAssets', () => {
+  it('exportPackage 反向重建完整包（含 followupsMd），重建包可直接再安装', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+    const packageWithFollowups = {
+      catalog: TEST_QUESTION_BANK.catalog,
+      contents: TEST_QUESTION_BANK.contents.map((content, index) =>
+        index === 0 ? { ...content, followupsMd: '## 追问：为什么？\n\n因为。' } : content,
+      ),
+    };
+    await repository.install(packageWithFollowups);
+
+    const exported = await repository.exportPackage('facee-fixture');
+    expect(exported?.catalog.id).toBe('facee-fixture');
+    expect(exported?.contents).toHaveLength(TEST_QUESTION_BANK.contents.length);
+    expect(exported?.contents[0].followupsMd).toBe('## 追问：为什么？\n\n因为。');
+    expect(exported?.contents[0].questionMd).toBe(TEST_QUESTION_BANK.contents[0].questionMd);
+    expect(exported?.contents[0].answerMd).toBe(TEST_QUESTION_BANK.contents[0].answerMd);
+
+    // 反向重建的包换 id 后可直接安装（合法、无资产路径残留）
+    await expect(
+      repository.install({ catalog: { ...exported!.catalog, id: 'local-roundtrip' }, contents: exported!.contents }),
+    ).resolves.toMatchObject({ questionCount: TEST_QUESTION_BANK.contents.length });
+  });
+
+  it('install 重建时从同 catalogId 旧安装继承题目资产（本地题库编辑不丢图）', async () => {
+    const fileSystem = new CopyableFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+
+    // 首次安装后给 fixture 第一题放一个资产目录（模拟线上库自带的图片）
+    await repository.install(TEST_QUESTION_BANK);
+    const firstNamespace = (await repository.listBanks()).find((bank) => bank.active)?.namespace;
+    const firstQuestionId = TEST_QUESTION_BANK.contents[0].id;
+    const assetsRoot = `file:///documents/facee-question-bank/banks/${firstNamespace}/questions/${firstQuestionId}/assets/`;
+    await fileSystem.makeDirectoryAsync(assetsRoot);
+    await fileSystem.writeAsStringAsync(`${assetsRoot}diagram.png`, 'png-bytes');
+
+    // 同 catalogId 重新安装（编辑保存路径）：新 namespace 里资产必须还在
+    await repository.install(TEST_QUESTION_BANK);
+    const reinstalledNamespace = (await repository.listBanks()).find((bank) => bank.active)?.namespace;
+    expect(reinstalledNamespace).not.toBe(firstNamespace);
+    await expect(
+      fileSystem.readAsStringAsync(
+        `file:///documents/facee-question-bank/banks/${reinstalledNamespace}/questions/${firstQuestionId}/assets/diagram.png`,
+      ),
+    ).resolves.toBe('png-bytes');
+
+    // 其它 catalogId 的安装不继承（首次安装没有可继承对象）
+    await repository.install(bankWithId('local-other'));
+    const otherNamespace = (await repository.listBanks()).find((bank) => bank.catalogId === 'local-other')
+      ?.namespace;
+    const info = await fileSystem.getInfoAsync(
+      `file:///documents/facee-question-bank/banks/${otherNamespace}/questions/${firstQuestionId}/assets/`,
+    );
+    expect(info.exists).toBe(false);
+  });
+
+  it('exportPackage 找不到题库返回 null', async () => {
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: new MemoryFileSystem() as never });
+    expect(await repository.exportPackage('local-none')).toBeNull();
+  });
+
+  it('copyBankAssets 把源库资产目录复制进目标库，无资产的题跳过', async () => {
+    const fileSystem = new CopyableFileSystem();
+    const repository = new FileSystemQuestionBankRepository({ fileSystem: fileSystem as never });
+
+    await repository.install(TEST_QUESTION_BANK);
+    const sourceNamespace = (await repository.listBanks()).find((bank) => bank.active)?.namespace;
+    expect(sourceNamespace).toBeTruthy();
+    // 给源库第一题放一个 assets 目录
+    const firstQuestionId = TEST_QUESTION_BANK.contents[0].id;
+    const assetsRoot = `file:///documents/facee-question-bank/banks/${sourceNamespace}/questions/${firstQuestionId}/assets/`;
+    await fileSystem.makeDirectoryAsync(assetsRoot);
+    await fileSystem.writeAsStringAsync(`${assetsRoot}diagram.png`, 'png-bytes');
+
+    await repository.install(bankWithId('local-copy'));
+    const targetNamespace = (await repository.listBanks()).find((bank) => bank.catalogId === 'local-copy')
+      ?.namespace;
+    expect(targetNamespace).toBeTruthy();
+
+    await repository.copyBankAssets('facee-fixture', 'local-copy');
+
+    expect(fileSystem.copied).toHaveLength(1);
+    expect(fileSystem.copied[0].to).toBe(
+      `file:///documents/facee-question-bank/banks/${targetNamespace}/questions/${firstQuestionId}/assets/`,
+    );
+    await expect(
+      fileSystem.readAsStringAsync(
+        `file:///documents/facee-question-bank/banks/${targetNamespace}/questions/${firstQuestionId}/assets/diagram.png`,
+      ),
+    ).resolves.toBe('png-bytes');
   });
 });

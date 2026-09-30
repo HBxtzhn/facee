@@ -8,6 +8,7 @@ import {
   saveQuestionBankUrl,
 } from './installer';
 import {
+  copyBankAsLocal,
   createLocalBankPackage,
   deleteLocalBankSource,
   saveLocalBankSource,
@@ -38,6 +39,8 @@ interface QuestionBankState {
   refreshBanks(): Promise<void>;
   /** 新建空本地题库（源文件 + 安装激活），返回 bankId */
   createLocalBank(title: string): Promise<string>;
+  /** 把已装题库复制为新的本地可编辑题库（安装并激活），返回副本 bankId */
+  copyBank(catalogId: string): Promise<string>;
   /** 保存本地题库源并重建安装；若编辑的不是当前题库，保存后保持原题库激活 */
   saveLocalBank(source: LocalBankSource): Promise<void>;
   deleteLocalBank(bankId: string): Promise<void>;
@@ -123,6 +126,19 @@ export const useQuestionBankStore = create<QuestionBankState>((set, get) => ({
     await runInstall(set, () => questionBankRepository.install(bank));
     await get().refreshBanks();
     return bank.catalog.id;
+  },
+
+  copyBank: async (catalogId) => {
+    assertNativeBankOperations();
+    const exported = await questionBankRepository.exportPackage(catalogId);
+    if (!exported) throw new Error(`没有找到题库：${catalogId}`);
+    const source = copyBankAsLocal(exported);
+    await saveLocalBankSource(source);
+    await runInstall(set, () => questionBankRepository.install(source.package));
+    // install 只落 markdown；题目图片资产从源库逐题拷贝（方法内部尽力而为）
+    await questionBankRepository.copyBankAssets(catalogId, source.bankId);
+    await get().refreshBanks();
+    return source.bankId;
   },
 
   saveLocalBank: async (source) => {

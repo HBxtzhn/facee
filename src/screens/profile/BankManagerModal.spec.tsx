@@ -9,6 +9,7 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 const mockActions = {
   refreshBanks: jest.fn(),
   switchBank: jest.fn(),
+  copyBank: jest.fn(),
   deleteLocalBank: jest.fn(),
 };
 
@@ -44,6 +45,7 @@ describe('BankManagerModal 题库管理弹窗', () => {
         visible
         onClose={() => undefined}
         onEditBank={() => undefined}
+        onBankCopied={() => undefined}
         onCreateLocal={() => undefined}
         onAddOnline={() => undefined}
       />,
@@ -65,6 +67,7 @@ describe('BankManagerModal 题库管理弹窗', () => {
         visible
         onClose={() => undefined}
         onEditBank={onEditBank}
+        onBankCopied={() => undefined}
         onCreateLocal={() => undefined}
         onAddOnline={() => undefined}
       />,
@@ -81,6 +84,7 @@ describe('BankManagerModal 题库管理弹窗', () => {
         visible
         onClose={() => undefined}
         onEditBank={() => undefined}
+        onBankCopied={() => undefined}
         onCreateLocal={() => undefined}
         onAddOnline={() => undefined}
       />,
@@ -96,6 +100,7 @@ describe('BankManagerModal 题库管理弹窗', () => {
         visible
         onClose={() => undefined}
         onEditBank={() => undefined}
+        onBankCopied={() => undefined}
         onCreateLocal={() => undefined}
         onAddOnline={() => undefined}
       />,
@@ -106,5 +111,25 @@ describe('BankManagerModal 题库管理弹窗', () => {
     });
     fireEvent.press(view.getByLabelText('确认删除题库 我的错题集'));
     expect(mockActions.deleteLocalBank).toHaveBeenCalledWith('local-my');
+  });
+  it('复制按钮对任意题库可见，成功后带回副本 bankId', async () => {
+    const onBankCopied = jest.fn();
+    mockActions.copyBank.mockResolvedValue('local-copy-1');
+    const view = await render(
+      <BankManagerModal
+        visible
+        onClose={() => undefined}
+        onEditBank={() => undefined}
+        onBankCopied={onBankCopied}
+        onCreateLocal={() => undefined}
+        onAddOnline={() => undefined}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.press(view.getByLabelText('复制题库 Java 面试题库 为本地可编辑副本'));
+    });
+    expect(mockActions.copyBank).toHaveBeenCalledWith('facee-official');
+    expect(onBankCopied).toHaveBeenCalledWith('local-copy-1');
   });
 });

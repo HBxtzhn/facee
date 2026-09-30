@@ -136,6 +136,13 @@ export interface QuestionBankRepository {
   switchBank(catalogId: string): Promise<void>;
   /** 删除一个已安装题库；若删除的是当前题库，自动切到剩余题库或清空。 */
   deleteBank(catalogId: string): Promise<void>;
+  /**
+   * 把已装题库反向重建为完整包（含每题 followupsMd），供「复制为本地题库」。
+   * 找不到题库返回 null；题库数据损坏时抛错。
+   */
+  exportPackage(catalogId: string): Promise<QuestionBankPackage | null>;
+  /** 复制源题库的题目图片资产到目标题库（尽力而为，缺资产时逐题跳过）。 */
+  copyBankAssets(sourceCatalogId: string, targetCatalogId: string): Promise<void>;
 }
 
 export interface RemoteQuestionBankRepository extends QuestionBankRepository {

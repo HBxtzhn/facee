@@ -123,7 +123,9 @@ export function createLocalBankPackage(title: string): QuestionBankPackage {
 
 /**
  * 新增或更新一道题（纯函数，返回新包）。
- * 新题 id 由标题哈希生成；标签 upsert 进 catalog.tags；分类固定为 local。
+ * 新题 id 由标题哈希生成；标签 upsert 进 catalog.tags。
+ * 编辑既有题时保留 categoryId 与内容扩展字段（followupsMd/assetBaseUri）——
+ * 表单不覆盖它们，覆盖等于静默丢数据（追问、图片资源）。
  */
 export function upsertQuestion(
   bank: QuestionBankPackage,
@@ -149,6 +151,8 @@ export function upsertQuestion(
   const existingIds = new Set(bank.catalog.questions.map((question) => question.id));
   const id = draft.id ?? questionIdFromTitle(title, existingIds);
   if (draft.id && !existingIds.has(draft.id)) throw new Error(`要编辑的题目不存在：${draft.id}`);
+  const existingQuestion = draft.id ? bank.catalog.questions.find((question) => question.id === id) : undefined;
+  const existingContent = draft.id ? bank.contents.find((content) => content.id === id) : undefined;
   const maxSort = bank.catalog.questions.reduce((max, question) => Math.max(max, question.sort), 0);
 
   const question: Question = {
@@ -156,13 +160,14 @@ export function upsertQuestion(
     title,
     difficulty: draft.difficulty,
     hasAnswer: answerMd !== null,
-    sort: draft.id
-      ? bank.catalog.questions.find((question) => question.id === id)?.sort ?? maxSort + 10
-      : maxSort + 10,
+    sort: existingQuestion?.sort ?? maxSort + 10,
     tags: questionTags,
-    categoryId: DEFAULT_CATEGORY_ID,
+    // 编辑保留原分类（复制题库的题目分类各不相同），新题归入默认分类
+    categoryId: existingQuestion ? existingQuestion.categoryId ?? null : DEFAULT_CATEGORY_ID,
   };
-  const content = { id, questionMd, answerMd };
+  const content = existingContent
+    ? { ...existingContent, id, questionMd, answerMd }
+    : { id, questionMd, answerMd };
 
   const questions = draft.id
     ? bank.catalog.questions.map((existing) => (existing.id === id ? question : existing))
@@ -182,6 +187,44 @@ export function removeQuestion(bank: QuestionBankPackage, id: string): QuestionB
   return {
     catalog: { ...bank.catalog, questions: bank.catalog.questions.filter((question) => question.id !== id) },
     contents: bank.contents.filter((content) => content.id !== id),
+  };
+}
+
+/** 复制题库的标题规则：X → X（副本）→ X（副本2）→ X（副本3）… */
+export function copiedBankTitle(title: string): string {
+  const match = /^(.*)（副本(\d*)）$/.exec(title.trim());
+  if (match) {
+    const current = match[2] ? Number.parseInt(match[2], 10) : 1;
+    return `${match[1]}（副本${current + 1}）`;
+  }
+  return `${title.trim()}（副本）`;
+}
+
+/**
+ * 把已装题库包（repository.exportPackage 的产物）转为新的本地题库源。
+ * 题目/标签/分类/题目 id 全部原样保留（收藏按题目 id 记录，自动跟随；
+ * 掌握度按题库 id 命名空间，副本从零计）。assetBaseUri 不带走——它指向
+ * 源库命名空间，副本安装后由 getContent 按激活命名空间重新解析。
+ * 只做内存转换，落盘由调用方 saveLocalBankSource 完成。
+ */
+export function copyBankAsLocal(source: QuestionBankPackage): LocalBankSource {
+  const bankId = newLocalBankId();
+  return {
+    bankId,
+    updatedAt: '',
+    package: {
+      catalog: {
+        ...source.catalog,
+        id: bankId,
+        title: copiedBankTitle(source.catalog.title),
+      },
+      contents: source.contents.map((content) => ({
+        id: content.id,
+        questionMd: content.questionMd,
+        answerMd: content.answerMd,
+        followupsMd: content.followupsMd ?? null,
+      })),
+    },
   };
 }
 

@@ -18,6 +18,8 @@ const repository: QuestionBankRepository = {
   listBanks: async () => [],
   switchBank: async () => undefined,
   deleteBank: async () => undefined,
+  exportPackage: async () => null,
+  copyBankAssets: async () => undefined,
 };
 
 describe('configured question-bank installer', () => {

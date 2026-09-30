@@ -99,4 +99,12 @@ export class PreviewQuestionBankRepository implements QuestionBankRepository {
   async deleteBank(_catalogId: string): Promise<void> {
     throw new Error('Web 预览不支持删除题库，请在移动端使用');
   }
+
+  async exportPackage(_catalogId: string): Promise<QuestionBankPackage | null> {
+    return null;
+  }
+
+  async copyBankAssets(_sourceCatalogId: string, _targetCatalogId: string): Promise<void> {
+    // Web 预览无已装题库与文件系统，无需资产复制
+  }
 }

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import {
+  copiedBankTitle,
+  copyBankAsLocal,
   createLocalBankPackage,
   hashName,
   isLocalBankId,
@@ -14,6 +16,7 @@ import {
   type LocalBankSource,
 } from './local-banks';
 import { validateDecodedPackage } from './file-repository';
+import type { QuestionBankPackage } from './types';
 
 /** 与 file-repository.spec 的 MemoryFileSystem 同款最小桩（只实现用到的部分） */
 class MemoryFileSystem {
@@ -133,6 +136,63 @@ describe('local-banks 题目模型（纯函数）', () => {
     expect(() => upsertQuestion(bank, { ...DRAFT, id: 'q-nope' })).toThrow('不存在');
   });
 
+  it('编辑保留 followupsMd 与 assetBaseUri（表单不覆盖它们）', () => {
+    let bank = createLocalBankPackage('测试库');
+    bank = upsertQuestion(bank, DRAFT);
+    const id = bank.catalog.questions[0].id;
+    const withExtras = {
+      ...bank.contents[0],
+      followupsMd: '## 追问 1：为什么线程不安全？',
+      assetBaseUri: 'file:///docs/banks/ns/questions/x/assets/',
+    };
+    bank = { ...bank, contents: [withExtras] };
+
+    bank = upsertQuestion(bank, { ...DRAFT, id, questionMd: '改后的题干。' });
+    expect(bank.contents[0].questionMd).toBe('改后的题干。');
+    expect(bank.contents[0].followupsMd).toBe('## 追问 1：为什么线程不安全？');
+    expect(bank.contents[0].assetBaseUri).toBe('file:///docs/banks/ns/questions/x/assets/');
+  });
+
+  it('编辑保留原 categoryId（复制题库的分类各不相同），新题用默认分类', () => {
+    const bank: QuestionBankPackage = {
+      catalog: {
+        schemaVersion: 1,
+        id: 'interview-bank',
+        title: '线上题库',
+        categories: [
+          { id: 'java', name: 'Java', sort: 10 },
+          { id: 'db', name: '数据库', sort: 20 },
+        ],
+        tags: [],
+        questions: [
+          {
+            id: 'q-hashmap',
+            title: 'HashMap 原理',
+            difficulty: 2,
+            hasAnswer: true,
+            sort: 10,
+            tags: [],
+            categoryId: 'java',
+          },
+        ],
+      },
+      contents: [{ id: 'q-hashmap', questionMd: '讲讲 HashMap。', answerMd: '数组+红黑树。' }],
+    };
+
+    const edited = upsertQuestion(bank, {
+      id: 'q-hashmap',
+      title: 'HashMap 原理（改）',
+      difficulty: 3,
+      tags: [],
+      questionMd: '讲讲 HashMap（改）。',
+      answerMd: null,
+    });
+    expect(edited.catalog.questions[0].categoryId).toBe('java');
+
+    const added = upsertQuestion(bank, { ...DRAFT, title: '新加的题' });
+    expect(added.catalog.questions[1].categoryId).toBe('local');
+  });
+
   it('删除题目同时移除元数据与内容', () => {
     let bank = createLocalBankPackage('测试库');
     bank = upsertQuestion(bank, DRAFT);
@@ -152,6 +212,68 @@ describe('local-banks 题目模型（纯函数）', () => {
   it('hashName 对不同名称给出不同 id（抽样）', () => {
     expect(tagIdFromName('Java')).not.toBe(tagIdFromName('数据库'));
     expect(hashName('abc')).toBe(hashName('abc'));
+  });
+});
+
+describe('local-banks 复制为本地题库', () => {
+  const SOURCE: QuestionBankPackage = {
+    catalog: {
+      schemaVersion: 1,
+      id: 'interview-bank',
+      title: '面试题库',
+      categories: [
+        { id: 'java', name: 'Java', sort: 10 },
+        { id: 'db', name: '数据库', sort: 20 },
+      ],
+      tags: [{ id: 'tag-java', name: 'Java', parentId: null, sort: 10 }],
+      questions: [
+        {
+          id: 'q-hashmap',
+          title: 'HashMap 原理',
+          difficulty: 2,
+          hasAnswer: true,
+          sort: 10,
+          tags: [{ id: 'tag-java', name: 'Java' }],
+          categoryId: 'java',
+        },
+      ],
+    },
+    contents: [
+      {
+        id: 'q-hashmap',
+        questionMd: '讲讲 HashMap。',
+        answerMd: '数组+红黑树。',
+        followupsMd: '## 追问 1：扩容？\n\n2 倍扩容。',
+        assetBaseUri: 'file:///old/questions/q-hashmap/assets/',
+      },
+    ],
+  };
+
+  it('copiedBankTitle：X → X（副本）→ X（副本2）递增', () => {
+    expect(copiedBankTitle('面试题库')).toBe('面试题库（副本）');
+    expect(copiedBankTitle('面试题库（副本）')).toBe('面试题库（副本2）');
+    expect(copiedBankTitle('面试题库（副本3）')).toBe('面试题库（副本4）');
+  });
+
+  it('copyBankAsLocal：新 local- id、题目/分类/追问原样保留、去掉源 assetBaseUri', () => {
+    const copy = copyBankAsLocal(SOURCE);
+
+    expect(copy.bankId).toMatch(/^local-[a-z0-9]+$/);
+    expect(copy.package.catalog.id).toBe(copy.bankId);
+    expect(copy.package.catalog.title).toBe('面试题库（副本）');
+    // 元数据原样保留
+    expect(copy.package.catalog.questions[0].id).toBe('q-hashmap');
+    expect(copy.package.catalog.questions[0].categoryId).toBe('java');
+    expect(copy.package.catalog.categories).toEqual(SOURCE.catalog.categories);
+    // 内容原样保留（含追问），但源命名空间的 assetBaseUri 不带走
+    expect(copy.package.contents[0].id).toBe('q-hashmap');
+    expect(copy.package.contents[0].followupsMd).toContain('扩容');
+    expect(copy.package.contents[0].assetBaseUri).toBeUndefined();
+    // 副本必须是可安装的合法包
+    expect(() => validateDecodedPackage(copy.package)).not.toThrow();
+    // 不修改源包
+    expect(SOURCE.catalog.id).toBe('interview-bank');
+    expect(SOURCE.contents[0].assetBaseUri).toBeDefined();
   });
 });
 
