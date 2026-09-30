@@ -98,7 +98,10 @@ export function BankManagerModal({
       }
     >
       <SheetError message={error} />
-      {banksLoading ? <Text style={styles.loadingText}>正在读取题库列表…</Text> : null}
+      {/* 仅首次加载（列表为空）显示；切换题库时不显示，避免该行反复插入/移除导致弹窗抖动 */}
+      {banksLoading && banks.length === 0 ? (
+        <Text style={styles.loadingText}>正在读取题库列表…</Text>
+      ) : null}
       {!banksLoading && banks.length === 0 ? (
         <Text style={styles.emptyText}>本机还没有题库，从下方新建或添加。</Text>
       ) : null}
