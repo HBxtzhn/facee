@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Platform,
   Pressable,
   ScrollView,
@@ -49,6 +51,10 @@ import { isQuestionBodyRedundantWithTitle } from './detail/question-redundancy';
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Detail'>;
 type DetailRoute = RouteProp<HomeStackParamList, 'Detail'>;
 
+/** 切题滑入动画参数：位移足够表达方向，又不抢内容的注意力 */
+const QUESTION_SLIDE_DISTANCE = 88;
+const QUESTION_SLIDE_DURATION = 220;
+
 export function DetailScreen() {
   const route = useRoute<DetailRoute>();
   const nav = useNavigation<Nav>();
@@ -72,6 +78,11 @@ export function DetailScreen() {
   const [previewImage, setPreviewImage] = useState<{ src: string; alt?: string } | null>(null);
   const openImageViewer = useCallback((src: string, alt?: string) => setPreviewImage({ src, alt }), []);
   const [error, setError] = useState<string | null>(null);
+
+  // 切题滑入动画：moveInQueue 记录方向，内容加载完成后新题按方向滑入+淡入
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const slideOpacity = useRef(new Animated.Value(1)).current;
+  const pendingSlideRef = useRef<-1 | 0 | 1>(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -113,6 +124,20 @@ export function DetailScreen() {
     void loadQuestion();
   }, [loadQuestion]);
 
+  // 切题加载完成后：新题内容按方向滑入（1=下一题，从右侧；-1=上一题，从左侧）
+  useEffect(() => {
+    const direction = pendingSlideRef.current;
+    if (!direction || loadingQuestion) return;
+    pendingSlideRef.current = 0;
+    const fromX = direction > 0 ? QUESTION_SLIDE_DISTANCE : -QUESTION_SLIDE_DISTANCE;
+    slideAnim.setValue(fromX);
+    slideOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(slideAnim, { toValue: 0, duration: QUESTION_SLIDE_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(slideOpacity, { toValue: 1, duration: QUESTION_SLIDE_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+  }, [loadingQuestion, slideAnim, slideOpacity]);
+
   async function toggleFavorite() {
     await toggleFavoriteStore(id);
     setFavorited(useFavoritesStore.getState().has(id));
@@ -123,6 +148,8 @@ export function DetailScreen() {
     const nextIndex = queueIndex + offset;
     const nextId = queue[nextIndex];
     if (!nextId) return;
+    // 记录滑动方向：新题内容加载完成后按方向滑入（下一题从右、上一题从左）
+    pendingSlideRef.current = offset > 0 ? 1 : -1;
     nav.replace('Detail', { id: nextId, queue, queueIndex: nextIndex, mode: 'practice' });
   }
 
@@ -192,6 +219,8 @@ export function DetailScreen() {
         contentContainerStyle={[styles.content, practiceMode && styles.practiceContent]}
         contentInsetAdjustmentBehavior="automatic"
       >
+        {/* 切题动画层：包住全部随题变化的内容，头部按钮与底部 dock 保持静止 */}
+        <Animated.View style={{ transform: [{ translateX: slideAnim }], opacity: slideOpacity }}>
         {/* 精致且去臃肿的题目头部 */}
         <View style={styles.header}>
           <View style={styles.topMetaBar}>
@@ -353,6 +382,7 @@ export function DetailScreen() {
             </View>
           </View>
         ) : null}
+        </Animated.View>
       </ScrollView>
 
       {practiceMode ? (
