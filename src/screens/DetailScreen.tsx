@@ -44,6 +44,7 @@ import { FollowUpItem } from './detail/FollowUpItem';
 import { PracticeDock } from './detail/PracticeDock';
 import { markdownStyles, sourceMetaMarkdownStyles } from './detail/markdown-styles';
 import { renderImage, renderLink, renderTableHeader } from './detail/markdown-rules';
+import { isQuestionBodyRedundantWithTitle } from './detail/question-redundancy';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Detail'>;
 type DetailRoute = RouteProp<HomeStackParamList, 'Detail'>;
@@ -172,8 +173,12 @@ export function DetailScreen() {
     );
   }
 
-  // 判断题干正文是否与大标题完全重复；若完全重复，则避免重复渲染
-  const isQuestionRedundantWithTitle = questionBody.trim() === (meta?.title ?? id).trim();
+  // 题干只是标题的复述/礼貌化扩写（如「请说明…的区别，并解释为什么…」）时
+  // 隐藏正文卡片，避免同屏把同一句话读两遍
+  const isQuestionRedundantWithTitle = isQuestionBodyRedundantWithTitle(
+    meta?.title ?? id,
+    questionBody,
+  );
 
   return (
     <ImageViewerProvider value={openImageViewer}>
