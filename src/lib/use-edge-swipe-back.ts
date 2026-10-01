@@ -17,11 +17,21 @@ const GO_BACK_DEBOUNCE_MS = 400;
  *
  *   const panHandlers = useEdgeSwipeBack({ onEdgeBack: goBack });
  *   <View {...panHandlers}>…</View>
+ *
+ * 触摸起点不用 PanResponder 的 gesture.x0：Android 上「start 不认领、
+ * 仅 move 认领」时 gestureState.x0 恒为 0，会把所有滑动误判成左缘
+ * 手势（左滑切题永远失效、右滑切题变成返回）。起点从 View 原生
+ * onTouchStart 的 pageX 记录，两条判定路径共用。
  */
 export function useEdgeSwipeBack(options: SwipeActionHandlers) {
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const lastFiredAtRef = useRef(0);
+  const touchStartXRef = useRef(0);
+
+  const onTouchStart = useCallback((event: { nativeEvent: { pageX: number } }) => {
+    touchStartXRef.current = event.nativeEvent.pageX;
+  }, []);
 
   const fireAction = useCallback((action: ReturnType<typeof resolveSwipeAction>) => {
     if (!action) return;
@@ -40,14 +50,14 @@ export function useEdgeSwipeBack(options: SwipeActionHandlers) {
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_event, gesture) =>
           shouldClaimSwipe(
-            { x0: gesture.x0, dx: gesture.dx, dy: gesture.dy },
+            { x0: touchStartXRef.current, dx: gesture.dx, dy: gesture.dy },
             Boolean(optionsRef.current.onSwipeLeft || optionsRef.current.onSwipeRight),
           ),
         onPanResponderRelease: (_event, gesture) => {
           const { onEdgeBack, onSwipeLeft, onSwipeRight } = optionsRef.current;
           fireAction(
             resolveSwipeAction(
-              { x0: gesture.x0, dx: gesture.dx, dy: gesture.dy },
+              { x0: touchStartXRef.current, dx: gesture.dx, dy: gesture.dy },
               { onEdgeBack, onSwipeLeft, onSwipeRight },
             ),
           );
@@ -85,5 +95,5 @@ export function useEdgeSwipeBack(options: SwipeActionHandlers) {
     };
   }, [fireAction]);
 
-  return panHandlers;
+  return { panHandlers, onTouchStart };
 }

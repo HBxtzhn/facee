@@ -146,7 +146,7 @@ export function DetailScreen() {
 
   // 手势：中部左右滑切题（仅练习模式）+ 左缘右滑返回（浏览/练习都可用）。
   // 判定、防抖与桌面鼠标双路径都在 useEdgeSwipeBack 内。
-  const swipeHandlers = useEdgeSwipeBack({
+  const { panHandlers: swipeHandlers, onTouchStart: recordSwipeStart } = useEdgeSwipeBack({
     onEdgeBack: () => {
       if (nav.canGoBack()) nav.goBack();
       else nav.popToTop();
@@ -185,6 +185,7 @@ export function DetailScreen() {
     <View
       style={[styles.screen, practiceMode && Platform.OS === 'web' ? ({ userSelect: 'none' } as any) : null]}
       {...swipeHandlers}
+      onTouchStart={recordSwipeStart}
     >
       <ScrollView
         style={styles.container}

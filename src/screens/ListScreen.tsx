@@ -90,7 +90,7 @@ export function ListScreen() {
   const hasFilters = Boolean(keyword || difficulty !== undefined);
 
   // 左缘右滑返回首页（与详情页同一套手势 hook）
-  const swipeHandlers = useEdgeSwipeBack({
+  const { panHandlers: swipeHandlers, onTouchStart: recordSwipeStart } = useEdgeSwipeBack({
     onEdgeBack: () => {
       if (nav.canGoBack()) nav.goBack();
       else nav.popToTop();
@@ -98,7 +98,7 @@ export function ListScreen() {
   });
 
   return (
-    <View style={styles.container} {...swipeHandlers}>
+    <View style={styles.container} {...swipeHandlers} onTouchStart={recordSwipeStart}>
       <View style={styles.toolbar}>
         <View style={styles.searchBox}>
           <Search size={20} color={colors.textMuted} strokeWidth={1.8} />
