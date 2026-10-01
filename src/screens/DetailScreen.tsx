@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -51,9 +52,11 @@ import { isQuestionBodyRedundantWithTitle } from './detail/question-redundancy';
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Detail'>;
 type DetailRoute = RouteProp<HomeStackParamList, 'Detail'>;
 
-/** 切题滑入动画参数：位移足够表达方向，又不抢内容的注意力 */
-const QUESTION_SLIDE_DISTANCE = 88;
-const QUESTION_SLIDE_DURATION = 220;
+/** 切题推送动画：滑出 130ms、滑入 240ms；位移按屏宽比例，方向清晰可辨 */
+const SLIDE_OUT_DURATION = 130;
+const SLIDE_IN_DURATION = 240;
+const SLIDE_IN_RATIO = 0.32;
+const SLIDE_OUT_RATIO = 0.2;
 
 export function DetailScreen() {
   const route = useRoute<DetailRoute>();
@@ -79,10 +82,14 @@ export function DetailScreen() {
   const openImageViewer = useCallback((src: string, alt?: string) => setPreviewImage({ src, alt }), []);
   const [error, setError] = useState<string | null>(null);
 
-  // 切题滑入动画：moveInQueue 记录方向，内容加载完成后新题按方向滑入+淡入
+  // 切题推送动画：先沿滑动方向把当前题推出屏，新题加载完再从反方向整幅滑入
+  const { width: windowWidth } = useWindowDimensions();
+  const slideInDistance = Math.round(windowWidth * SLIDE_IN_RATIO);
+  const slideOutDistance = Math.round(windowWidth * SLIDE_OUT_RATIO);
   const slideAnim = useRef(new Animated.Value(0)).current;
   const slideOpacity = useRef(new Animated.Value(1)).current;
   const pendingSlideRef = useRef<-1 | 0 | 1>(0);
+  const slidingRef = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -124,19 +131,20 @@ export function DetailScreen() {
     void loadQuestion();
   }, [loadQuestion]);
 
-  // 切题加载完成后：新题内容按方向滑入（1=下一题，从右侧；-1=上一题，从左侧）
+  // 第二段：新题内容加载完成后，从滑动方向的反侧整幅滑入（下一题从右、上一题从左）
   useEffect(() => {
     const direction = pendingSlideRef.current;
     if (!direction || loadingQuestion) return;
     pendingSlideRef.current = 0;
-    const fromX = direction > 0 ? QUESTION_SLIDE_DISTANCE : -QUESTION_SLIDE_DISTANCE;
+    slidingRef.current = false;
+    const fromX = direction > 0 ? slideInDistance : -slideInDistance;
     slideAnim.setValue(fromX);
     slideOpacity.setValue(0);
     Animated.parallel([
-      Animated.timing(slideAnim, { toValue: 0, duration: QUESTION_SLIDE_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(slideOpacity, { toValue: 1, duration: QUESTION_SLIDE_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: SLIDE_IN_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(slideOpacity, { toValue: 1, duration: SLIDE_IN_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
-  }, [loadingQuestion, slideAnim, slideOpacity]);
+  }, [loadingQuestion, slideInDistance, slideAnim, slideOpacity]);
 
   async function toggleFavorite() {
     await toggleFavoriteStore(id);
@@ -148,9 +156,18 @@ export function DetailScreen() {
     const nextIndex = queueIndex + offset;
     const nextId = queue[nextIndex];
     if (!nextId) return;
-    // 记录滑动方向：新题内容加载完成后按方向滑入（下一题从右、上一题从左）
-    pendingSlideRef.current = offset > 0 ? 1 : -1;
-    nav.replace('Detail', { id: nextId, queue, queueIndex: nextIndex, mode: 'practice' });
+    if (slidingRef.current) return;
+    const direction: 1 | -1 = offset > 0 ? 1 : -1;
+    slidingRef.current = true;
+    // 第一段：当前内容沿滑动方向推出屏幕（下一题向左推、上一题向右推）
+    Animated.parallel([
+      Animated.timing(slideAnim, { toValue: direction > 0 ? -slideOutDistance : slideOutDistance, duration: SLIDE_OUT_DURATION, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(slideOpacity, { toValue: 0, duration: SLIDE_OUT_DURATION, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ]).start(() => {
+      // 第二段在新题加载完成后播放（见下方 effect）
+      pendingSlideRef.current = direction;
+      nav.replace('Detail', { id: nextId, queue, queueIndex: nextIndex, mode: 'practice' });
+    });
   }
 
   const rawQuestionBody = stripLeadingHeading(question, meta?.title);
