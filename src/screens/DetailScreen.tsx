@@ -1,14 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -52,12 +49,6 @@ import { isQuestionBodyRedundantWithTitle } from './detail/question-redundancy';
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Detail'>;
 type DetailRoute = RouteProp<HomeStackParamList, 'Detail'>;
 
-/** 切题推送动画：滑出 130ms、滑入 240ms；位移按屏宽比例，方向清晰可辨 */
-const SLIDE_OUT_DURATION = 130;
-const SLIDE_IN_DURATION = 240;
-const SLIDE_IN_RATIO = 0.32;
-const SLIDE_OUT_RATIO = 0.2;
-
 export function DetailScreen() {
   const route = useRoute<DetailRoute>();
   const nav = useNavigation<Nav>();
@@ -81,15 +72,6 @@ export function DetailScreen() {
   const [previewImage, setPreviewImage] = useState<{ src: string; alt?: string } | null>(null);
   const openImageViewer = useCallback((src: string, alt?: string) => setPreviewImage({ src, alt }), []);
   const [error, setError] = useState<string | null>(null);
-
-  // 切题推送动画：先沿滑动方向把当前题推出屏，新题加载完再从反方向整幅滑入
-  const { width: windowWidth } = useWindowDimensions();
-  const slideInDistance = Math.round(windowWidth * SLIDE_IN_RATIO);
-  const slideOutDistance = Math.round(windowWidth * SLIDE_OUT_RATIO);
-  const slideAnim = useRef(new Animated.Value(0)).current;
-  const slideOpacity = useRef(new Animated.Value(1)).current;
-  const pendingSlideRef = useRef<-1 | 0 | 1>(0);
-  const slidingRef = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -131,21 +113,6 @@ export function DetailScreen() {
     void loadQuestion();
   }, [loadQuestion]);
 
-  // 第二段：新题内容加载完成后，从滑动方向的反侧整幅滑入（下一题从右、上一题从左）
-  useEffect(() => {
-    const direction = pendingSlideRef.current;
-    if (!direction || loadingQuestion) return;
-    pendingSlideRef.current = 0;
-    slidingRef.current = false;
-    const fromX = direction > 0 ? slideInDistance : -slideInDistance;
-    slideAnim.setValue(fromX);
-    slideOpacity.setValue(0);
-    Animated.parallel([
-      Animated.timing(slideAnim, { toValue: 0, duration: SLIDE_IN_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(slideOpacity, { toValue: 1, duration: SLIDE_IN_DURATION, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-    ]).start();
-  }, [loadingQuestion, slideInDistance, slideAnim, slideOpacity]);
-
   async function toggleFavorite() {
     await toggleFavoriteStore(id);
     setFavorited(useFavoritesStore.getState().has(id));
@@ -156,18 +123,7 @@ export function DetailScreen() {
     const nextIndex = queueIndex + offset;
     const nextId = queue[nextIndex];
     if (!nextId) return;
-    if (slidingRef.current) return;
-    const direction: 1 | -1 = offset > 0 ? 1 : -1;
-    slidingRef.current = true;
-    // 第一段：当前内容沿滑动方向推出屏幕（下一题向左推、上一题向右推）
-    Animated.parallel([
-      Animated.timing(slideAnim, { toValue: direction > 0 ? -slideOutDistance : slideOutDistance, duration: SLIDE_OUT_DURATION, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(slideOpacity, { toValue: 0, duration: SLIDE_OUT_DURATION, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-    ]).start(() => {
-      // 第二段在新题加载完成后播放（见下方 effect）
-      pendingSlideRef.current = direction;
-      nav.replace('Detail', { id: nextId, queue, queueIndex: nextIndex, mode: 'practice' });
-    });
+    nav.replace('Detail', { id: nextId, queue, queueIndex: nextIndex, mode: 'practice' });
   }
 
   const rawQuestionBody = stripLeadingHeading(question, meta?.title);
@@ -236,8 +192,6 @@ export function DetailScreen() {
         contentContainerStyle={[styles.content, practiceMode && styles.practiceContent]}
         contentInsetAdjustmentBehavior="automatic"
       >
-        {/* 切题动画层：包住全部随题变化的内容，头部按钮与底部 dock 保持静止 */}
-        <Animated.View style={{ transform: [{ translateX: slideAnim }], opacity: slideOpacity }}>
         {/* 精致且去臃肿的题目头部 */}
         <View style={styles.header}>
           <View style={styles.topMetaBar}>
@@ -399,7 +353,6 @@ export function DetailScreen() {
             </View>
           </View>
         ) : null}
-        </Animated.View>
       </ScrollView>
 
       {practiceMode ? (
