@@ -5,6 +5,7 @@ import {
   normalizeQuestionBankZipPath,
   resolveAssetUri,
   resolveQuestionAssetMarkdown,
+  validateDecodedPackage,
   validateQuestionBankZipEntries,
   validateQuestionBankZipPath,
 } from './file-repository';
@@ -244,6 +245,41 @@ describe('FileSystemQuestionBankRepository installation safety', () => {
 
     expect((await repository.getCatalog())?.title).toBe(TEST_QUESTION_BANK.catalog.title);
     expect((await repository.getContent('fixture-java-001'))?.questionMd).toBe(originalQuestion?.questionMd);
+  });
+
+  it('installFromUrl 下载即本地化：id 重写为 local-，返回可落盘的题库源', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({
+      fileSystem: fileSystem as never,
+      zipArchive: createZipArchive(fileSystem),
+    });
+
+    const result = await repository.installFromUrl('https://example.test/bank.zip');
+    const catalog = await repository.getCatalog();
+    expect(catalog?.id).toMatch(/^local-[a-z0-9]+$/);
+    expect(result.localSource?.sourceUrl).toBe('https://example.test/bank.zip');
+    expect(result.localSource?.package.catalog.id).toBe(catalog?.id);
+    expect(result.localSource?.package.contents).toHaveLength(TEST_QUESTION_BANK.contents.length);
+    // 题库源是合法包，可直接落盘重装
+    expect(() => validateDecodedPackage(result.localSource!.package)).not.toThrow();
+  });
+
+  it('installFromUrl 传 reuseCatalogId 时沿用原 id（同 URL 更新语义）', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const repository = new FileSystemQuestionBankRepository({
+      fileSystem: fileSystem as never,
+      zipArchive: createZipArchive(fileSystem),
+    });
+
+    const first = await repository.installFromUrl('https://example.test/bank.zip');
+    const reusedId = first.localSource!.bankId;
+    const second = await repository.installFromUrl('https://example.test/bank.zip', undefined, {
+      reuseCatalogId: reusedId,
+    });
+    expect(second.localSource?.bankId).toBe(reusedId);
+    const banks = await repository.listBanks();
+    expect(banks.filter((bank) => bank.catalogId === reusedId)).toHaveLength(1);
+    expect(banks.find((bank) => bank.catalogId === reusedId)?.source).toBe('local');
   });
 });
 
@@ -506,6 +542,28 @@ describe('FileSystemQuestionBankRepository exportPackage / copyBankAssets', () =
     await expect(
       fileSystem.readAsStringAsync(
         `file:///documents/facee-question-bank/banks/${targetNamespace}/questions/${firstQuestionId}/assets/diagram.png`,
+      ),
+    ).resolves.toBe('png-bytes');
+  });
+
+  it('restoreBankAssets 从备份暂存目录回填图片到已装命名空间', async () => {
+    const freshFs = new CopyableFileSystem();
+    const freshRepository = new FileSystemQuestionBankRepository({ fileSystem: freshFs as never });
+    await freshRepository.install(bankWithId('local-my-bank'));
+    const freshNamespace = (await freshRepository.listBanks()).find((bank) => bank.active)?.namespace;
+    expect(freshNamespace).toBeTruthy();
+
+    // 模拟解压后的备份暂存内容（新设备上没有任何资产）
+    const stagedRoot = 'file:///cache/backup-assets/';
+    const firstQuestionId = TEST_QUESTION_BANK.contents[0].id;
+    await freshFs.makeDirectoryAsync(`${stagedRoot}local-my-bank/${firstQuestionId}/assets/`);
+    await freshFs.writeAsStringAsync(`${stagedRoot}local-my-bank/${firstQuestionId}/assets/diagram.png`, 'png-bytes');
+
+    await freshRepository.restoreBankAssets(stagedRoot, 'local-my-bank');
+
+    await expect(
+      freshFs.readAsStringAsync(
+        `file:///documents/facee-question-bank/banks/${freshNamespace}/questions/${firstQuestionId}/assets/diagram.png`,
       ),
     ).resolves.toBe('png-bytes');
   });

@@ -1,9 +1,13 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import type {
+  LocalBankSource,
   Question,
   QuestionBankPackage,
 } from './types';
 import { QUESTION_BANK_ROOT_NAME } from './file-repository';
+
+/** 类型定义随题库包模型放在 types.ts，这里转出口维持既有导入路径 */
+export type { LocalBankSource };
 
 /**
  * 本地题库源管理。
@@ -32,12 +36,6 @@ export type QuestionDraft = {
   /** 空/纯空白视为无答案（hasAnswer: false） */
   answerMd: string | null;
 };
-
-export interface LocalBankSource {
-  bankId: string;
-  updatedAt: string;
-  package: QuestionBankPackage;
-}
 
 export interface LocalBankSourceSummary {
   bankId: string;
@@ -297,7 +295,8 @@ export async function deleteLocalBankSource(
   }
 }
 
-function parseLocalBankSource(raw: string): LocalBankSource | null {
+/** 解析并校验本地题库源 JSON（备份导入复用）；无效返回 null */
+export function parseLocalBankSource(raw: string): LocalBankSource | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);

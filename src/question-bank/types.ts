@@ -75,6 +75,15 @@ export interface QuestionBankPackage {
   contents: QuestionContent[];
 }
 
+/** 本地题库源（可编辑真值），持久化为 <documents>/…/local-sources/<bankId>.json */
+export interface LocalBankSource {
+  bankId: string;
+  updatedAt: string;
+  package: QuestionBankPackage;
+  /** 若该库来自线上 ZIP 下载，记录下载地址：同地址重复下载按"更新原库"处理 */
+  sourceUrl?: string;
+}
+
 export interface QuestionFilter {
   tagId?: TagId;
   difficulty?: Difficulty;
@@ -94,6 +103,8 @@ export type InstallationProgressListener = (progress: InstallationProgress) => v
 export interface InstallResult {
   questionCount: number;
   tagCount: number;
+  /** installFromUrl 专属：下载即本地化产出的题库源（调用方负责落盘 local-sources） */
+  localSource?: LocalBankSource;
 }
 
 /** 已安装题库的摘要（listBanks 返回） */
@@ -143,11 +154,19 @@ export interface QuestionBankRepository {
   exportPackage(catalogId: string): Promise<QuestionBankPackage | null>;
   /** 复制源题库的题目图片资产到目标题库（尽力而为，缺资产时逐题跳过）。 */
   copyBankAssets(sourceCatalogId: string, targetCatalogId: string): Promise<void>;
+  /**
+   * 把本机全部本地题库（catalog.id 带 local- 前缀）的图片资产拷到备份暂存目录，
+   * 布局为 <targetAssetsRoot>/<catalogId>/<questionId>/assets/…。尽力而为，返回涉题库数。
+   */
+  stageLocalBankAssets(targetAssetsRoot: string): Promise<number>;
+  /** 从备份暂存目录（同上布局）把指定题库的图片资产回填到其已装命名空间。尽力而为。 */
+  restoreBankAssets(assetsRoot: string, catalogId: string): Promise<void>;
 }
 
 export interface RemoteQuestionBankRepository extends QuestionBankRepository {
   installFromUrl(
     url: string,
     onProgress?: InstallationProgressListener,
+    options?: { reuseCatalogId?: string },
   ): Promise<InstallResult>;
 }

@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   Trophy,
+  Archive,
 } from 'lucide-react-native';
 import { useQuestionBankStore } from '../question-bank/store';
 import { useUserStore } from '../store/userStore';
@@ -19,6 +20,7 @@ import { AppUpdateCard } from '../components/app-update-card';
 import { cardChrome, colors, radii, spacing, typography } from '../theme';
 import { BankManagerModal } from './profile/BankManagerModal';
 import { BankEditorModal } from './profile/BankEditorModal';
+import { BackupModal } from './profile/BackupModal';
 import { LlmSettingsModal } from './profile/LlmSettingsModal';
 
 export function ProfileScreen() {
@@ -42,6 +44,7 @@ export function ProfileScreen() {
   const [managerVisible, setManagerVisible] = useState(false);
   const [editorBankId, setEditorBankId] = useState<string | null>(null);
   const [llmSettingsVisible, setLlmSettingsVisible] = useState(false);
+  const [backupVisible, setBackupVisible] = useState(false);
   const [creatingBank, setCreatingBank] = useState(false);
   const isNative = Platform.OS !== 'web';
 
@@ -228,6 +231,17 @@ export function ProfileScreen() {
                   <Text style={styles.bankActionText}>更换题库</Text>
                 </Pressable>
               )}
+              {isNative ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="备份与恢复"
+                  onPress={() => setBackupVisible(true)}
+                  style={({ pressed }) => [styles.bankActionRow, pressed && styles.pressedRow]}
+                >
+                  <Archive size={14} color={colors.textSecondary} strokeWidth={2} />
+                  <Text style={styles.bankActionText}>备份与恢复</Text>
+                </Pressable>
+              ) : null}
             </>
           ) : isNative ? (
             <Pressable
@@ -363,6 +377,7 @@ export function ProfileScreen() {
             }}
           />
           <LlmSettingsModal visible={llmSettingsVisible} onClose={() => setLlmSettingsVisible(false)} />
+          <BackupModal visible={backupVisible} onClose={() => setBackupVisible(false)} />
         </>
       ) : null}
     </SafeAreaView>

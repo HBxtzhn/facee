@@ -11,9 +11,16 @@ import {
   copyBankAsLocal,
   createLocalBankPackage,
   deleteLocalBankSource,
+  listLocalBankSources,
+  loadLocalBankSource,
   saveLocalBankSource,
   type LocalBankSource,
 } from './local-banks';
+import {
+  createBackupZip,
+  restoreBackupZip,
+  type BackupImportSummary,
+} from '../lib/backup';
 import type {
   InstallationProgress,
   InstalledBankSummary,
@@ -45,6 +52,10 @@ interface QuestionBankState {
   saveLocalBank(source: LocalBankSource): Promise<void>;
   deleteLocalBank(bankId: string): Promise<void>;
   switchBank(catalogId: string): Promise<void>;
+  /** 把全部本地题库（含图片资产）打包为备份 ZIP，返回分享用路径 */
+  exportBackup(): Promise<{ zipPath: string; bankCount: number }>;
+  /** 从备份 ZIP 增量导入题库（id 冲突时自动换新 id 加「导入」后缀） */
+  importBackup(fileUri: string): Promise<{ imported: BackupImportSummary[] }>;
 }
 
 /** Owns the application-level question-bank lifecycle for every screen. */
@@ -166,6 +177,39 @@ export const useQuestionBankStore = create<QuestionBankState>((set, get) => ({
     await questionBankRepository.switchBank(catalogId);
     await reloadCatalog(set);
     await get().refreshBanks();
+  },
+
+  exportBackup: async () => {
+    assertNativeBankOperations();
+    const summaries = await listLocalBankSources();
+    const sources: LocalBankSource[] = [];
+    for (const summary of summaries) {
+      const full = await loadLocalBankSource(summary.bankId);
+      if (full) sources.push(full);
+    }
+    const { zipPath, manifest } = await createBackupZip({
+      sources,
+      stageLocalBankAssets: (root) => questionBankRepository.stageLocalBankAssets(root),
+    });
+    return { zipPath, bankCount: manifest.banks.length };
+  },
+
+  importBackup: async (fileUri) => {
+    assertNativeBankOperations();
+    const existing = new Set((await questionBankRepository.listBanks()).map((bank) => bank.catalogId));
+    const result = await restoreBackupZip({
+      zipPath: fileUri,
+      existingCatalogIds: existing,
+      installBank: async (source) => {
+        await saveLocalBankSource(source);
+        await runInstall(set, () => questionBankRepository.install(source.package));
+      },
+      restoreBankAssets: (assetsRoot, catalogId) =>
+        questionBankRepository.restoreBankAssets(assetsRoot, catalogId),
+    });
+    await reloadCatalog(set);
+    await get().refreshBanks();
+    return result;
   },
 }));
 

@@ -1,5 +1,10 @@
 import { asRemoteQuestionBankRepository } from './client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  listLocalBankSources,
+  loadLocalBankSource,
+  saveLocalBankSource,
+} from './local-banks';
 import type {
   InstallationProgressListener,
   InstallResult,
@@ -41,17 +46,38 @@ export function getQuestionBankInstallMode(
     : 'unconfigured';
 }
 
-export function installConfiguredQuestionBank(
+export async function installConfiguredQuestionBank(
   repository: QuestionBankRepository,
   onProgress?: InstallationProgressListener,
   url = getConfiguredQuestionBankUrl(),
 ): Promise<InstallResult> {
   const remote = asRemoteQuestionBankRepository(repository);
   if (!url) {
-    return Promise.reject(new Error('未配置线上题库地址（EXPO_PUBLIC_QUESTION_BANK_URL）'));
+    throw new Error('未配置线上题库地址（EXPO_PUBLIC_QUESTION_BANK_URL）');
   }
   if (!remote) {
-    return Promise.reject(new Error('当前平台暂不支持安装线上 ZIP 题库'));
+    throw new Error('当前平台暂不支持安装线上 ZIP 题库');
   }
-  return remote.installFromUrl(url, onProgress);
+  // 下载即本地化。同 URL 已装过本地库 → 视为更新：沿用原 catalog.id，
+  // install 原子替换旧库；首次下载生成新 local- id。
+  const reuseCatalogId = await findLocalBankIdBySourceUrl(url);
+  const result = await remote.installFromUrl(url, onProgress, reuseCatalogId ? { reuseCatalogId } : undefined);
+  if (result.localSource) {
+    await saveLocalBankSource(result.localSource);
+  }
+  return result;
+}
+
+/** 找出由同一 URL 下载过的本地题库 id（更新语义）；没有则 null */
+async function findLocalBankIdBySourceUrl(url: string): Promise<string | null> {
+  const summaries = await listLocalBankSources();
+  for (const summary of summaries) {
+    try {
+      const source = await loadLocalBankSource(summary.bankId);
+      if (source?.sourceUrl === url) return source.bankId;
+    } catch {
+      // 单个源读取失败不影响查找
+    }
+  }
+  return null;
 }

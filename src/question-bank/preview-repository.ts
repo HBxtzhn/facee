@@ -105,6 +105,14 @@ export class PreviewQuestionBankRepository implements QuestionBankRepository {
   }
 
   async copyBankAssets(_sourceCatalogId: string, _targetCatalogId: string): Promise<void> {
-    // Web 预览无已装题库与文件系统，无需资产复制
+    // Web 预览无已装题库与文件系统
+  }
+
+  async stageLocalBankAssets(_targetAssetsRoot: string): Promise<number> {
+    return 0;
+  }
+
+  async restoreBankAssets(_assetsRoot: string, _catalogId: string): Promise<void> {
+    // Web 预览无已装题库与文件系统
   }
 }

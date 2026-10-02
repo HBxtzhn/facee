@@ -48,6 +48,12 @@ const DOWNLOAD_NAME = 'facee-question-bank-downloads/';
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SAFE_NAMESPACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
 
+/** 与 local-banks.newLocalBankId 同格式的本地库 id（file-repository 不反向依赖 local-banks） */
+function makeLocalBankId(): string {
+  const random = Math.random().toString(36).slice(2, 8);
+  return `local-${Date.now().toString(36)}${random}`.slice(0, 40);
+}
+
 /**
  * 题库注册表：catalogId -> namespace。
  * 多题库共存的关键——install 激活新库后只删除「同 catalogId」的旧 namespace，
@@ -309,6 +315,7 @@ export class FileSystemQuestionBankRepository
   async installFromUrl(
     url: string,
     onProgress?: InstallationProgressListener,
+    options?: { reuseCatalogId?: string },
   ): Promise<InstallResult> {
     assertHttpUrl(url);
     await this.ensureRoot();
@@ -353,12 +360,28 @@ export class FileSystemQuestionBankRepository
 
       const previousNamespace = await this.readActiveNamespace();
       const previousCatalogId = await this.readCatalogIdAt(previousNamespace);
+      // 下载即本地化：ZIP 落地即成为可编辑的本地题库。catalog.id 重写为
+      // local- 前缀（同 URL 更新时沿用原 id，install 原子替换旧库）；
+      // 图片资产已随解压目录进入 namespace，后续编辑保存由同 id 继承兜底。
+      const localId = options?.reuseCatalogId ?? makeLocalBankId();
+      const localizedCatalog: QuestionBankCatalog = { ...catalog, id: localId };
+      await this.fs.writeAsStringAsync(
+        `${stagingPath}${QUESTION_BANK_ZIP_CATALOG_PATH}`,
+        JSON.stringify(localizedCatalog),
+        { encoding: 'utf8' },
+      );
       notifyProgress(onProgress, { completed: total, total, label: '正在激活题库' });
       await this.activateDirectory(stagingPath, finalPath, token, previousNamespace);
       activated = true;
       notifyProgress(onProgress, { completed: total, total, label: '题库安装完成' });
-      await this.reconcileBanksAfterActivate(catalog.id, token, previousNamespace, previousCatalogId);
-      return { questionCount: catalog.questions.length, tagCount: catalog.tags.length };
+      await this.reconcileBanksAfterActivate(localizedCatalog.id, token, previousNamespace, previousCatalogId);
+      const localPackage = await this.exportPackage(localId);
+      if (!localPackage) throw new Error('题库安装完成，但无法读取本地目录');
+      return {
+        questionCount: localizedCatalog.questions.length,
+        tagCount: localizedCatalog.tags.length,
+        localSource: { bankId: localId, updatedAt: '', package: localPackage, sourceUrl: url },
+      };
     } catch (error) {
       if (!activated) {
         await this.removeDirectory(extractPath);
@@ -544,6 +567,60 @@ export class FileSystemQuestionBankRepository
     const answerMd = await this.readOptionalMarkdown(this.answerPath(namespace, id));
     const followupsMd = await this.readOptionalMarkdown(this.followupsPath(namespace, id));
     return { id, questionMd, answerMd, followupsMd };
+  }
+
+  async stageLocalBankAssets(targetAssetsRoot: string): Promise<number> {
+    const registry = await this.readRegistry();
+    let stagedBanks = 0;
+    for (const [catalogId, namespace] of Object.entries(registry)) {
+      if (!catalogId.startsWith(LOCAL_BANK_ID_PREFIX)) continue;
+      let catalog: QuestionBankCatalog;
+      try {
+        catalog = await this.readCatalogAt(this.bankPath(namespace));
+      } catch {
+        continue;
+      }
+      let stagedAny = false;
+      for (const question of catalog.questions) {
+        try {
+          const source = this.assetsPath(namespace, question.id);
+          const info = await this.fs.getInfoAsync(source);
+          if (!info.exists || !info.isDirectory) continue;
+          // 目录交给 copyAsync 创建：先建空目录再拷会触发「拷进子目录」歧义
+          await this.fs.copyAsync({
+            from: source,
+            to: joinUri(joinUri(targetAssetsRoot, `${catalogId}/`), `${question.id}/assets/`),
+          });
+          stagedAny = true;
+        } catch {
+          // 单题失败只影响该题图片，不阻塞备份
+        }
+      }
+      if (stagedAny) stagedBanks += 1;
+    }
+    return stagedBanks;
+  }
+
+  async restoreBankAssets(assetsRoot: string, catalogId: string): Promise<void> {
+    const registry = await this.readRegistry();
+    const namespace = registry[catalogId];
+    if (!namespace) return;
+    let catalog: QuestionBankCatalog;
+    try {
+      catalog = await this.readCatalogAt(this.bankPath(namespace));
+    } catch {
+      return;
+    }
+    for (const question of catalog.questions) {
+      try {
+        const source = joinUri(joinUri(assetsRoot, `${catalogId}/`), `${question.id}/assets/`);
+        const info = await this.fs.getInfoAsync(source);
+        if (!info.exists || !info.isDirectory) continue;
+        await this.fs.copyAsync({ from: source, to: this.assetsPath(namespace, question.id) });
+      } catch {
+        // 尽力而为：缺图不阻塞导入
+      }
+    }
   }
 
   private async readOptionalMarkdown(path: string): Promise<string | null> {
